@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<!-- Sin `user-scalable=no`: bloquear el zoom en una aplicación que se
+     usa parado en una sala, a veces con guantes y a veces por alguien
+     que no ve de cerca, es negarle una herramienta que el teléfono ya
+     trae. Es además una falla de accesibilidad conocida. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0C110E">
+<title>LuxHort Clima</title>
+<link rel="manifest" href="manifest.webmanifest">
+<style>
+:root{
+  --fondo:#0C110E; --tarjeta:#151E18; --borde:#6e7681; --linea:#263329;
+  --texto:#E4EBE5; --tenue:#8A9B8F;
+  --ok:#5BC46B; --atencion:#D9A227; --peligro:#E2564C; --marca:#76A868;
+  --accion:#58a6ff; --sobreClaro:#08130B;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--fondo);color:var(--texto);
+     font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+     padding:14px;padding-bottom:calc(28px + env(safe-area-inset-bottom,0px))}
+h1{font-size:20px;margin:0 0 2px}
+h2{font-size:15px;color:var(--tenue);margin:0 0 10px;font-weight:600}
+.sub{color:var(--tenue);font-size:14px;margin:0 0 14px}
+.card{background:var(--tarjeta);border:1px solid var(--linea);
+      border-radius:12px;padding:14px;margin-bottom:12px}
+button,select{font:inherit;border-radius:10px;border:1px solid var(--borde);
+       background:#1d2a21;color:var(--texto);padding:12px 14px;
+       min-height:48px;cursor:pointer}
+button{width:100%}
+button.pri{background:var(--ok);color:var(--sobreClaro);border-color:var(--ok);font-weight:600}
+/* Un botón deshabilitado tiene que VERSE deshabilitado, pero seguir
+   legible: hay que poder leer qué dice el que no se puede tocar. */
+button:disabled{background:var(--fondo);color:var(--tenue);
+                border-color:var(--linea);cursor:not-allowed}
+button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{
+  outline:3px solid var(--accion);outline-offset:2px}
+input{font:inherit;width:100%;padding:13px;border-radius:10px;
+      border:1px solid var(--borde);background:#0f1712;color:var(--texto);
+      min-height:48px}
+label{display:block;font-size:14px;color:var(--tenue);margin:12px 0 6px}
+.val{font-size:30px;font-weight:600;line-height:1.15}
+.uni{font-size:14px;color:var(--tenue);font-weight:400}
+.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(126px,1fr))}
+.pill{display:inline-block;font-size:13px;padding:3px 10px;border-radius:999px;
+      border:1px solid var(--borde);color:var(--tenue);white-space:nowrap}
+.pill.on{background:#17301c;border-color:var(--ok);color:var(--ok)}
+.pill.mal{background:#2c1512;border-color:var(--peligro);color:var(--peligro)}
+.pill.warn-pill{background:#2e2410;border-color:var(--atencion);color:var(--atencion)}
+/* El boton de fuera de servicio. 44 px de alto porque se toca justo
+   cuando alguien esta arreglando algo, a veces con guantes. */
+button.chico{width:auto;min-width:78px;min-height:44px;padding:8px 12px;font-size:14px}
+button.chico.marcado{background:var(--atencion);color:var(--sobreClaro);
+                     border-color:var(--atencion);font-weight:600}
+.err{color:var(--peligro)} .warn{color:var(--atencion)} .ok{color:var(--ok)}
+.viejo{opacity:.35}
+.oculto{display:none!important}
+
+/* El banner de emergencia: fuera de cualquier pestaña, siempre visible */
+#banner{background:var(--peligro);border-radius:12px;padding:12px 14px;
+        margin-bottom:12px}
+#banner b{display:block;font-size:17px;color:#fff}
+#banner span{font-size:15px;color:#fff}
+
+#pestanas{display:flex;gap:6px;margin-bottom:12px;overflow-x:auto}
+#pestanas button{width:auto;flex:1 0 auto;padding:10px 14px;min-height:44px;
+                 font-size:14px}
+#pestanas button[aria-pressed="true"]{background:var(--ok);
+  color:var(--sobreClaro);border-color:var(--ok);font-weight:600}
+
+.renglon{display:grid;grid-template-columns:1fr auto;gap:6px 10px;
+         align-items:center;padding:9px 0;border-bottom:1px solid var(--linea)}
+.renglon .por{grid-column:1/-1;margin:0;font-size:13px}
+.renglon:last-child{border-bottom:none}
+
+/* Una fila de configuración: nombre, valor, y los mandos */
+.fila{display:grid;grid-template-columns:1fr auto auto auto;gap:8px;
+      align-items:center;padding:9px 0;border-bottom:1px solid var(--linea)}
+.fila:last-child{border-bottom:none}
+.fila-t{font-size:15px;color:var(--tenue)}
+.fila-v{font-size:17px;font-weight:600;min-width:92px;text-align:right;
+        font-variant-numeric:tabular-nums}
+.fila button{width:56px;min-height:44px;padding:0;font-size:20px}
+.fila select{min-height:44px;padding:8px 10px;max-width:58vw}
+/* La fila que espera confirmación se marca EN SU LUGAR. Un cartel
+   general no dice cuál, y si se tocaron dos cosas seguidas hay que
+   adivinar de cuál habla. */
+.fila.esperando .fila-v{color:var(--atencion)}
+.fila.esperando .fila-t::after{content:" · enviando…";color:var(--atencion);font-size:13px}
+
+.llave{width:64px;min-height:36px;height:36px;border-radius:18px;
+       background:var(--linea);border:1px solid var(--borde);position:relative;
+       padding:0}
+.llave::after{content:"";position:absolute;top:4px;left:4px;width:26px;height:26px;
+       border-radius:50%;background:#fff;transition:left .12s}
+.llave.on{background:var(--ok);border-color:var(--ok)}
+.llave.on::after{left:32px}
+@media (prefers-reduced-motion:reduce){.llave::after{transition:none}}
+
+.leyenda{display:flex;flex-wrap:wrap;gap:14px;margin-top:10px;font-size:13px}
+.leyenda b{font-weight:600}
+.aviso-linea{min-height:22px;font-size:14px;margin:0 0 10px}
+</style>
+</head>
+<body>
+
+<h1>LuxHort Clima</h1>
+<p class="sub" id="sub">Conectando…</p>
+
+<!-- ── Falta configurar ─────────────────────────────────────── -->
+<section id="sinconfig" class="card oculto" role="alert">
+  <p><b>Falta la clave <code>anon</code>.</b></p>
+  <p class="sub">Se pega en <code>config.js</code>. Sale de
+     <i>Project Settings → API → anon public</i>: un texto largo que
+     empieza con <code>eyJ</code>.</p>
+</section>
+
+<!-- ── Ingreso ──────────────────────────────────────────────── -->
+<section id="ingreso" class="card oculto">
+  <h2>Entrar</h2>
+  <button id="btn-google">Continuar con Google</button>
+  <p class="sub" style="text-align:center;margin:12px 0">o con tu correo</p>
+  <label for="correo">Correo</label>
+  <input id="correo" type="email" autocomplete="email" inputmode="email">
+  <label for="clave">Contraseña</label>
+  <input id="clave" type="password" autocomplete="current-password">
+  <div style="display:flex;gap:8px;margin-top:14px">
+    <button id="btn-entrar" class="pri">Entrar</button>
+    <button id="btn-crear">Crear cuenta</button>
+  </div>
+  <button id="btn-olvide" style="margin-top:8px;border:none;background:none;color:var(--accion)">
+    Olvidé mi contraseña
+  </button>
+  <p id="msg-ingreso" class="sub" role="status" aria-live="polite"></p>
+</section>
+
+<!-- ── Salas ────────────────────────────────────────────────── -->
+<section id="equipos" class="card oculto">
+  <h2>Tus salas</h2>
+  <div id="lista-equipos"></div>
+</section>
+
+<!-- ── Una sala ─────────────────────────────────────────────── -->
+<main id="sala" class="oculto">
+
+  <!-- El banner va FUERA de las pestañas: durante una emergencia tiene
+       que verse esté donde esté el operador. -->
+  <div id="banner" class="oculto" role="alert">
+    <b id="banner-tit"></b><span id="banner-sub"></span>
+  </div>
+
+  <section class="card" style="display:flex;justify-content:space-between;align-items:center">
+    <b id="sala-nombre">—</b>
+    <span class="pill" id="sala-edad">—</span>
+  </section>
+
+  <p id="aviso" class="aviso-linea" role="status" aria-live="polite"></p>
+
+  <nav id="pestanas" aria-label="Secciones">
+    <button data-p="vista" aria-pressed="true">Lo que pasa</button>
+    <button data-p="config" aria-pressed="false">Configuración</button>
+    <button data-p="reles-panel" aria-pressed="false">Equipos</button>
+    <button data-p="hist" aria-pressed="false">Historial</button>
+  </nav>
+
+  <div id="vista">
+    <section class="card">
+      <div class="grid" id="medidas"></div>
+      <p class="sub" id="medidas-pie" style="margin:12px 0 0"></p>
+    </section>
+    <section class="card">
+      <h2>Equipos</h2>
+      <div id="salidas"></div>
+    </section>
+    <section class="card">
+      <h2>Lo que va a hacer</h2>
+      <div id="agenda"></div>
+    </section>
+    <section class="card">
+      <h2>Avisos</h2>
+      <div id="alarmas"></div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button id="btn-ack-seg">Reconocer seguridad</button>
+        <button id="btn-ack">Reconocer alarmas</button>
+      </div>
+    </section>
+  </div>
+
+  <div id="config" class="oculto"></div>
+
+  <div id="reles-panel" class="oculto">
+    <section class="card">
+      <h2>Qué maneja cada relé</h2>
+      <p class="sub">Todos los equipos son opcionales: un relé puede quedar
+      libre. Cambiar el equipo de un relé se aplica en el controlador con
+      las mismas verificaciones que desde la pantalla del tablero.</p>
+      <div id="reles"></div>
+    </section>
+  </div>
+
+  <div id="hist" class="oculto">
+    <section class="card">
+      <h2>Últimas 24 horas</h2>
+      <div id="grafico"></div>
+    </section>
+  </div>
+
+  <button id="btn-salir" style="margin-top:8px">Cerrar sesión</button>
+</main>
+
+<script src="config.js"></script>
+<script src="parametros.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="app.js"></script>
+<script>
+"use strict";
+const _$ = id => document.getElementById(id);
+const _ver = (el, s) => el && el.classList.toggle("oculto", !s);
+
+// ── Sin clave no se arranca ────────────────────────────────────
+if (!window.CFG || !CFG.anon) {
+  _ver(_$("sinconfig"), true);
+  _$("sub").textContent = "Sin configurar";
+  throw new Error("falta la clave anon");
+}
+
+//  Se llama `cliente` y no `sb`: `app.js` ya declara un `sb` en el
+//  mismo ambito global, y dos declaraciones del mismo nombre hacen que
+//  este bloque entero NO COMPILE. El sintoma es brutal para lo tonto
+//  que es la causa: la pagina se queda en «Conectando...» sin un solo
+//  mensaje en consola, porque el error es de parseo y ocurre antes de
+//  que corra nada.
+const cliente = supabase.createClient(CFG.url, CFG.anon);
+LuxApp.init(cliente);
+
+let equipoAbierto = false;
+
+// ── Ingreso ────────────────────────────────────────────────────
+function msg(t, clase) {
+  const m = _$("msg-ingreso");
+  m.textContent = t;
+  m.className = "sub " + (clase || "");
+}
+
+_$("btn-google").onclick = () =>
+  cliente.auth.signInWithOAuth({ provider: "google",
+                            options: { redirectTo: location.href } });
+
+_$("btn-entrar").onclick = async () => {
+  const { error } = await cliente.auth.signInWithPassword({
+    email: _$("correo").value.trim(), password: _$("clave").value });
+  // El motivo del rechazo se muestra. Un "no se pudo entrar" mudo hace
+  // que la gente pruebe la misma contraseña cinco veces.
+  if (error) msg(error.message, "err");
+};
+
+_$("btn-crear").onclick = async () => {
+  const { error } = await cliente.auth.signUp({
+    email: _$("correo").value.trim(), password: _$("clave").value });
+  msg(error ? error.message : "Te mandamos un correo para confirmar.",
+      error ? "err" : "ok");
+};
+
+_$("btn-olvide").onclick = async () => {
+  const c = _$("correo").value.trim();
+  if (!c) return msg("Escribí tu correo primero.", "warn");
+  const { error } = await cliente.auth.resetPasswordForEmail(c,
+    { redirectTo: location.href });
+  msg(error ? error.message : "Revisá tu correo.", error ? "err" : "ok");
+};
+
+_$("btn-salir").onclick = async () => { await cliente.auth.signOut(); location.reload(); };
+
+// ── Sesión ─────────────────────────────────────────────────────
+//  El cliente de Supabase SOSTIENE UN CERROJO mientras corre el callback
+//  de `onAuthStateChange`. Cualquier llamada de adentro que necesite la
+//  sesión -y `cliente.from(...)` la necesita- se traba contra ese mismo
+//  cerrojo y no vuelve nunca.
+//
+//  No da error ni excepción: la promesa simplemente no resuelve. El
+//  síntoma era un panel vacío y mudo al recargar con la sesión abierta,
+//  que es el camino más común de todos. El `setTimeout` saca la llamada
+//  de adentro del callback. Es feo y es la forma recomendada.
+let cargando = null;
+cliente.auth.onAuthStateChange((_e, sesion) => setTimeout(() => arrancar(sesion), 0));
+cliente.auth.getSession().then(({ data }) => arrancar(data.session));
+
+async function arrancar(sesion) {
+  const dentro = !!sesion;
+  _ver(_$("ingreso"), !dentro);
+  if (!dentro) {
+    _ver(_$("equipos"), false);
+    _ver(_$("sala"), false);
+    _$("sub").textContent = "Entrá para ver tus salas";
+    return;
+  }
+  _$("sub").textContent = sesion.user.email || "";
+  // Si ya hay una sala abierta no se vuelve al índice: sería sacarle de
+  // la vista lo que estaba mirando cada vez que se refresca el token,
+  // que pasa solo y sin aviso.
+  if (equipoAbierto) return;
+  _ver(_$("equipos"), true);
+  cargando = (cargando || Promise.resolve()).then(cargarEquipos).catch(() => {});
+  await cargando;
+}
+
+async function cargarEquipos() {
+  const host = _$("lista-equipos");
+  //  Mientras se espera, el panel DICE que está esperando. Un panel
+  //  vacío durante la carga es indistinguible de uno vacío porque algo
+  //  se rompió, y esa confusión fue la que costó encontrar el cerrojo.
+  if (!host.innerHTML.trim() && !host.children.length)
+    host.innerHTML = '<p class="sub">Buscando tus salas…</p>';
+
+  let data, error;
+  try {
+    ({ data, error } = await cliente.from("equipos").select("id,nombre,serie"));
+  } catch (e) { error = e; }
+
+  //  El DOM se arma aparte y se cambia UNA vez, al final. Vaciarlo antes
+  //  de saber si hay con qué llenarlo deja un panel en blanco si algo
+  //  falla en el medio, y un panel en blanco no dice nada.
+  if (error || !Array.isArray(data)) {
+    host.innerHTML = '<p class="sub err">No se pudo leer la lista de salas' +
+      (error && error.message ? ": " + error.message : ".") + "</p>";
+    return;
+  }
+  if (!data.length) {
+    host.innerHTML = '<p class="sub">Todavía no hay ninguna sala asociada a ' +
+      'tu cuenta. Se dan de alta desde el panel de Supabase.</p>';
+    return;
+  }
+  const frag = document.createDocumentFragment();
+  data.forEach(eq => {
+    const b = document.createElement("button");
+    b.textContent = eq.nombre;
+    b.style.marginBottom = "8px";
+    b.onclick = () => { equipoAbierto = true; LuxApp.abrirSala(eq); };
+    frag.appendChild(b);
+  });
+  host.innerHTML = "";
+  host.appendChild(frag);
+  if (data.length === 1) { equipoAbierto = true; LuxApp.abrirSala(data[0]); }
+}
+
+// ── Pestañas y acciones ────────────────────────────────────────
+document.querySelectorAll("#pestanas button").forEach(b =>
+  b.onclick = () => LuxApp.pestana(b.dataset.p));
+_$("btn-ack").onclick = () => LuxApp.mandar(LuxApp.CMD.ALARMA_ACK, 0xFFFF, 0);
+_$("btn-ack-seg").onclick = () => LuxApp.mandar(LuxApp.CMD.ACK_SEGURIDAD, 0, 0);
+</script>
+
+<script>
+// El trabajador de servicio hace que la aplicación abra sin internet.
+// Se registra sólo si la página vino por HTTPS: por HTTP el navegador lo
+// rechaza, y el error en consola manda a buscar un problema que no existe.
+if ("serviceWorker" in navigator && location.protocol === "https:")
+  navigator.serviceWorker.register("sw.js").catch(() => {});
+</script>
+</body>
+</html>
