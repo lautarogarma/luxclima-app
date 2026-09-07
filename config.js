@@ -15,9 +15,19 @@
 //  `service_role`: saltea todas las políticas.
 window.CFG = {
   url: "https://ofxasnprbnisbylrhksk.supabase.co",
-
-  // ⚠️  PEGAR ACÁ la clave `anon` / `publishable`.
-  //     Project Settings → API → Project API keys → anon public
-  //     Es un texto largo (~200 caracteres) que empieza con "eyJ".
   anon: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9meGFzbnByYm5pc2J5bHJoa3NrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg0Mzc0MzEsImV4cCI6MjEwNDAxMzQzMX0.35UIHDsZzdb_1IhBnNN-CPVROGIhoOelxB2Pe6dSaSM",
+
+  //  ── Entrar con Google ──
+  //  En FALSO hasta que el proveedor esté configurado en Supabase
+  //  (Authentication → Providers → Google, con el identificador y el
+  //  secreto que se sacan de la consola de Google Cloud).
+  //
+  //  Está apagado a propósito y no simplemente sin configurar: con el
+  //  botón visible y el proveedor apagado, tocarlo saca al operador de
+  //  la aplicación y lo deja en una página de error en JSON que dice
+  //  «Unsupported provider». Eso no es un contratiempo menor — el que
+  //  lo toca no puede saber si se rompió la aplicación, si su cuenta
+  //  está mal, o si tiene que hacer algo. Un botón que no funciona es
+  //  peor que un botón que no está.
+  google: false
 };

@@ -120,8 +120,9 @@ button.chico.marcado{background:var(--atencion);color:var(--sobreClaro);
 <!-- ── Ingreso ──────────────────────────────────────────────── -->
 <section id="ingreso" class="card oculto">
   <h2>Entrar</h2>
-  <button id="btn-google">Continuar con Google</button>
-  <p class="sub" style="text-align:center;margin:12px 0">o con tu correo</p>
+  <button id="btn-google" class="oculto">Continuar con Google</button>
+  <p id="o-con-correo" class="sub oculto"
+     style="text-align:center;margin:12px 0">o con tu correo</p>
   <label for="correo">Correo</label>
   <input id="correo" type="email" autocomplete="email" inputmode="email">
   <label for="clave">Contraseña</label>
@@ -244,9 +245,16 @@ function msg(t, clase) {
   m.className = "sub " + (clase || "");
 }
 
-_$("btn-google").onclick = () =>
-  cliente.auth.signInWithOAuth({ provider: "google",
-                            options: { redirectTo: location.href } });
+//  El botón sólo aparece si el proveedor está realmente configurado.
+//  Con el proveedor apagado, tocarlo saca al operador de la aplicación
+//  y lo deja mirando un error en JSON de Supabase.
+if (CFG.google) {
+  _ver(_$("btn-google"), true);
+  _ver(_$("o-con-correo"), true);
+  _$("btn-google").onclick = () =>
+    cliente.auth.signInWithOAuth({ provider: "google",
+                              options: { redirectTo: location.href } });
+}
 
 _$("btn-entrar").onclick = async () => {
   const { error } = await cliente.auth.signInWithPassword({
@@ -323,8 +331,15 @@ async function cargarEquipos() {
   //  de saber si hay con qué llenarlo deja un panel en blanco si algo
   //  falla en el medio, y un panel en blanco no dice nada.
   if (error || !Array.isArray(data)) {
-    host.innerHTML = '<p class="sub err">No se pudo leer la lista de salas' +
-      (error && error.message ? ": " + error.message : ".") + "</p>";
+    //  Por `textContent`, no concatenado en `innerHTML`: un mensaje de
+    //  error puede reflejar parte de lo que se pidio, y concatenarlo en
+    //  HTML lo vuelve un camino para inyectar marcado.
+    host.innerHTML = "";
+    const e = document.createElement("p");
+    e.className = "sub err";
+    e.textContent = "No se pudo leer la lista de salas" +
+      (error && error.message ? ": " + error.message : ".");
+    host.appendChild(e);
     return;
   }
   if (!data.length) {

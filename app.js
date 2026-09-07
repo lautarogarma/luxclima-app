@@ -26,7 +26,6 @@ const ver = (el, s) => el && el.classList.toggle("oculto", !s);
 const CMD = { ACK_SEGURIDAD: 1, ALARMA_ACK: 2, PARAMETRO: 9, ASIGNAR_SALIDA: 10 };
 //  El canal va en el byte alto y el estado en el bajo, como todo
 //  parámetro que habla de un canal.
-const PAR_SALIDA_FUERA = 96;
 
 const EQUIPOS = ["libre", "extraccion", "ventilacion interna",
   "aire acondicionado", "calefaccion", "deshumidificador", "humidificador",
@@ -428,7 +427,7 @@ function pintarEquipos() {
     b.setAttribute("aria-label",
         (o.fuera ? "volver a servicio el relé " : "marcar fuera de servicio el relé ")
         + o.ch);
-    b.onclick = () => mandar(CMD.PARAMETRO, PAR_SALIDA_FUERA,
+    b.onclick = () => mandar(CMD.PARAMETRO, window.PAR.SALIDA_FUERA,
                              (o.ch << 8) | (o.fuera ? 0 : 1), "fuera" + o.ch);
     row.append(t, sel, est, b);
     host.appendChild(row);
@@ -454,18 +453,21 @@ function pintarEquipos() {
 function proximas24() {
   const c = ultimaConfig;
   if (!c) return null;
+  const P = window.PAR;
   const ev = [];
   const hhmm = m => String(Math.floor((m % 1440) / 60)).padStart(2, "0") + ":" +
                     String(m % 60).padStart(2, "0");
 
-  const luzHab = c[21], luzOn = c[22], luzOff = c[23];
+  const luzHab = c[P.LUZ_HABILITADA],
+        luzOn  = c[P.LUZ_ON_MIN],
+        luzOff = c[P.LUZ_OFF_MIN];
   if (luzHab && luzOn === luzOff) {
     ev.push([0, "El fotoperiodo está encendido pero enciende y apaga a la " +
                 "misma hora: la luz no se va a prender nunca", "mal"]);
   } else if (luzHab) {
     ev.push([luzOn,  "Enciende la luz", "luz"]);
     ev.push([luzOff, "Apaga la luz", "luz"]);
-    const purga = c[47] || 0;
+    const purga = c[P.PURGA_POST_LUZ] || 0;
     if (purga) {
       ev.push([(luzOff + purga) % 1440,
                "Termina la purga — " + purga + " min extrayendo", "purga"]);
@@ -474,8 +476,8 @@ function proximas24() {
     const duracion = (luzOff - luzOn + 1440) % 1440;
 
     // La ventana de inyección, cuando cuelga del fotoperiodo.
-    if (c[2] && c[7] === 2) {
-      const demora = c[5] || 0, corte = c[6] || 0;
+    if (c[P.CO2_HABILITADO] && c[P.CO2_VENTANA] === 2) {
+      const demora = c[P.CO2_DEMORA_MIN] || 0, corte = c[P.CO2_CORTE_ANTES] || 0;
       if (demora + corte >= duracion) {
         ev.push([luzOn, "LA VENTANA DE CO2 NO SE ABRE NUNCA: la demora (" +
                  demora + " min) más el corte (" + corte + " min) superan las " +
@@ -484,15 +486,15 @@ function proximas24() {
         ev.push([(luzOn + demora) % 1440, "Puede empezar a inyectar CO2", "co2"]);
         ev.push([(luzOff - corte + 1440) % 1440, "Corta la inyección de CO2", "co2"]);
       }
-    } else if (c[2] && c[7] === 0) {
+    } else if (c[P.CO2_HABILITADO] && c[P.CO2_VENTANA] === 0) {
       ev.push([0, "Inyecta también de noche: sin luz la planta no fotosintetiza " +
                   "y el gas se acumula sin que nadie lo use", "mal"]);
     }
 
     // El riego colgado de la luz: la espera y después el tren.
-    if (c[20] && c[68] === 1) {
-      const p0 = c[69] || 0, dur = c[70] || 0;
-      const pausa = c[71] || 0, veces = c[72] || 0;
+    if (c[P.RIEGO_HABILITADO] && c[P.RIEGO_VENTANA] === 1) {
+      const p0 = c[P.RIEGO_P0] || 0, dur = c[P.RIEGO_P1_DUR] || 0;
+      const pausa = c[P.RIEGO_P1_PAUSA] || 0, veces = c[P.RIEGO_P1_REP] || 0;
       if (!veces) {
         ev.push([luzOn, "Riego encendido y sin pulsos cargados", "mal"]);
       } else {
@@ -556,7 +558,19 @@ async function pintarHistorial() {
     .select("momento,temp_c10,hum_pct10,co2_ppm,suelo_pct10,medicion_ok")
     .eq("equipo_id", equipoActual.id).gte("momento", desde)
     .order("momento", { ascending: true }).limit(600);
-  if (error) { host.innerHTML = '<p class="sub err">' + error.message + "</p>"; return; }
+  if (error) {
+    //  El mensaje va por `textContent`, no concatenado en `innerHTML`.
+    //  Un texto de error puede reflejar parte de lo que se pidio, y
+    //  concatenarlo en HTML lo convierte en un camino para inyectar
+    //  marcado. No hace falta que sea explotable hoy: es la forma
+    //  equivocada de poner texto ajeno en una pagina.
+    host.innerHTML = "";
+    const e = document.createElement("p");
+    e.className = "sub err";
+    e.textContent = "No se pudo leer el historial: " + error.message;
+    host.appendChild(e);
+    return;
+  }
   if (!data || data.length < 2) {
     host.innerHTML = '<p class="sub">Todavía no hay historial suficiente. ' +
       'El equipo sube un punto por minuto desde que arranca.</p>';
