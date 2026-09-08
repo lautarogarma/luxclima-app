@@ -110,27 +110,41 @@ async function mandar(codigo, arg1, arg2, claveVuelo) {
 //  resultado CON LA CAUSA. Un «no se pudo» mudo manda a buscar cinco
 //  cosas distintas a mano.
 async function vigilar(id, claveVuelo) {
+  let ultimo = "pendiente";
   for (let i = 0; i < 40; i++) {
     await new Promise(r => setTimeout(r, 1500));
     const { data } = await sb.from("comandos")
       .select("estado,resultado").eq("id", id).maybeSingle();
     if (!data) continue;
+    ultimo = data.estado;
     if (data.estado === "aplicado") {
       if (claveVuelo !== undefined) enVuelo.delete(claveVuelo);
       aviso("Hecho.", "ok"); refrescar(); return;
     }
-    if (data.estado === "rechazado" || data.estado === "vencido") {
+    //  `indeterminado` es terminal y NO es un rechazo: el equipo se
+    //  llevó la orden y nunca dijo qué pasó. Mezclarlo con «rechazado»
+    //  haría creer que no se ejecutó, que es justo lo contrario de lo
+    //  que hay que asumir.
+    if (data.estado === "rechazado" || data.estado === "vencido" ||
+        data.estado === "indeterminado") {
       if (claveVuelo !== undefined) enVuelo.delete(claveVuelo);
-      aviso(data.resultado || "El equipo lo rechazó.", "err");
+      aviso(data.resultado ||
+            (data.estado === "indeterminado"
+              ? "El equipo la tomó y no dijo qué pasó: pudo haberse ejecutado."
+              : "El equipo lo rechazó."), "err");
       pintarTodo(); return;
     }
   }
   if (claveVuelo !== undefined) enVuelo.delete(claveVuelo);
-  //  Ni aplicado ni rechazado en un minuto: el equipo no lo tomó. NO se
-  //  reintenta solo — repetir a ciegas una orden que puede haberse
-  //  ejecutado es peor que no mandarla.
-  aviso("El equipo no contestó. No se reintenta solo: verificá antes de repetir.",
-        "err");
+  //  Un minuto sin resolución. Lo que se dice depende de dónde quedó, y
+  //  la diferencia es la que importa: si el equipo NO la tomó, no pasó
+  //  nada y se puede repetir; si LA TOMÓ y no contestó, la acción pudo
+  //  haber ocurrido y repetirla a ciegas es peor que no mandarla.
+  aviso(ultimo === "entregado"
+        ? "El equipo la recibió pero no dijo qué pasó. Pudo haberse " +
+          "ejecutado: verificá la sala antes de repetir."
+        : "El equipo no la tomó: no se ejecutó. Revisá el enlace y " +
+          "volvé a intentar.", "err");
   pintarTodo();
 }
 
