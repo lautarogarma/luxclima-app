@@ -29,5 +29,15 @@ window.CFG = {
   //  lo toca no puede saber si se rompió la aplicación, si su cuenta
   //  está mal, o si tiene que hacer algo. Un botón que no funciona es
   //  peor que un botón que no está.
-  google: false
+  google: false,
+
+  //  ── Correo ──
+  //  En FALSO mientras el proyecto no tenga un servidor de correo
+  //  propio (SMTP). Con esto apagado, Supabase manda con su servicio de
+  //  cortesía: dos correos por hora y sólo a la casilla del dueño del
+  //  proyecto, así que recuperar la contraseña NO funciona para nadie
+  //  más. La aplicación lo dice en vez de aparentar que se mandó.
+  //
+  //  Cuando se configure SMTP en Authentication → Emails, poner `true`.
+  correoPropio: false
 };

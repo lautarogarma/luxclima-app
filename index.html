@@ -282,7 +282,17 @@ _$("btn-olvide").onclick = async () => {
   if (!c) return msg("Escribí tu correo primero.", "warn");
   const { error } = await cliente.auth.resetPasswordForEmail(c,
     { redirectTo: location.href });
-  msg(error ? error.message : "Revisá tu correo.", error ? "err" : "ok");
+  if (error) return msg(error.message, "err");
+  //  Sin servidor de correo propio, Supabase usa su servicio de
+  //  cortesía: dos correos por hora y sólo a la casilla del dueño del
+  //  proyecto. Decir «revisá tu correo» a secas deja a cualquier otro
+  //  operador mirando una bandeja que no va a recibir nada, sin manera
+  //  de saber si el problema es suyo. Se dice lo que de verdad pasa.
+  msg(CFG.correoPropio
+      ? "Si esa cuenta existe, te llega un enlace."
+      : "Pedido enviado. Ojo: todavía no hay servidor de correo propio, " +
+        "así que el enlace sólo llega a la casilla del dueño del proyecto. " +
+        "Si no sos vos, pedile que te cambie la contraseña.", "ok");
 };
 
 _$("btn-salir").onclick = async () => { await cliente.auth.signOut(); location.reload(); };
