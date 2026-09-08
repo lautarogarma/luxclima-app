@@ -677,6 +677,19 @@ function abrirSala(eq) {
   timer = setInterval(refrescar, 10000);
 }
 
+//  Volver a la lista de salas. Hay que apagar el reloj: si no, el
+//  refresco sigue pidiendo el estado de la sala que se acaba de dejar,
+//  y al abrir otra quedan dos relojes pisándose.
+function cerrarSala() {
+  clearInterval(timer);
+  timer = null;
+  equipoActual = null;
+  ultimoEstado = null;
+  ultimaConfig = null;
+  ver($("sala"), false);
+  ver($("equipos"), true);
+}
+
 function pestana(cual) {
   ["vista", "config", "reles-panel", "hist"].forEach(id =>
     ver($(id), id === cual));
@@ -685,5 +698,5 @@ function pestana(cual) {
   if (cual === "hist") pintarHistorial();
 }
 
-window.LuxApp = { init(cliente) { sb = cliente; }, abrirSala, pestana,
-                  mandar, CMD, refrescar };
+window.LuxApp = { init(cliente) { sb = cliente; }, abrirSala, cerrarSala,
+                  pestana, mandar, CMD, refrescar };

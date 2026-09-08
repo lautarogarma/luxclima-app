@@ -152,7 +152,8 @@ button.chico.marcado{background:var(--atencion);color:var(--sobreClaro);
     <b id="banner-tit"></b><span id="banner-sub"></span>
   </div>
 
-  <section class="card" style="display:flex;justify-content:space-between;align-items:center">
+  <section class="card" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+    <button id="btn-salas" title="Volver a la lista de salas">Todas las salas</button>
     <b id="sala-nombre">—</b>
     <span class="pill" id="sala-edad">—</span>
   </section>
@@ -265,10 +266,15 @@ _$("btn-entrar").onclick = async () => {
 };
 
 _$("btn-crear").onclick = async () => {
-  const { error } = await cliente.auth.signUp({
+  const { data, error } = await cliente.auth.signUp({
     email: _$("correo").value.trim(), password: _$("clave").value });
-  msg(error ? error.message : "Te mandamos un correo para confirmar.",
-      error ? "err" : "ok");
+  if (error) { msg(error.message, "err"); return; }
+  //  La cuenta queda lista y con sesion abierta: el cambio de estado de
+  //  autenticacion se encarga de mostrar las salas. Decir «te mandamos
+  //  un correo» era mentira -no llegaba ninguno- y la persona se
+  //  quedaba esperando con la cuenta ya creada.
+  msg(data && data.session ? "Cuenta creada."
+      : "Te mandamos un correo para confirmar.", "ok");
 };
 
 _$("btn-olvide").onclick = async () => {
@@ -314,6 +320,143 @@ async function arrancar(sesion) {
   await cargando;
 }
 
+// ── Las salas ──────────────────────────────────────────────────
+//  Cada sala tiene su propio controlador PoE. Acá se crean, se
+//  renombran, se les vincula el controlador y se borran, sin entrar al
+//  panel de Supabase. Antes esta pantalla decía «se dan de alta desde
+//  el panel de Supabase», que para el que instala el equipo es lo mismo
+//  que decirle que no se puede.
+
+//  Todo texto que venga de la base o de un mensaje de error se pone con
+//  `textContent`. Concatenarlo en `innerHTML` lo convierte en un camino
+//  para inyectar marcado, y el nombre de una sala lo escribe una
+//  persona.
+function _el(tag, clase, texto) {
+  const e = document.createElement(tag);
+  if (clase) e.className = clase;
+  if (texto !== undefined) e.textContent = texto;
+  return e;
+}
+
+function _boton(texto, alTocar, clase) {
+  const b = _el("button", clase, texto);
+  b.style.marginRight = "6px";
+  b.onclick = alTocar;
+  return b;
+}
+
+//  Un error de PostgREST trae el motivo en `message`. Mostrarlo importa:
+//  «no se pudo» a secas hace que la persona repita lo mismo tres veces.
+function _porQue(error, siNo) {
+  return (error && (error.message || error.hint)) || siNo;
+}
+
+async function crearSala() {
+  const nombre = (prompt("¿Cómo se llama la sala nueva?") || "").trim();
+  if (!nombre) return;
+  const { data, error } = await cliente.rpc("crear_sala", { p_nombre: nombre });
+  if (error) { alert(_porQue(error, "No se pudo crear la sala.")); return; }
+  const fila = Array.isArray(data) ? data[0] : data;
+  await cargarEquipos();
+  if (fila && fila.codigo) mostrarCodigo(fila.equipo_id, fila.codigo);
+}
+
+async function renombrarSala(eq) {
+  const nombre = (prompt("Nombre nuevo para la sala:", eq.nombre) || "").trim();
+  if (!nombre || nombre === eq.nombre) return;
+  const { error } = await cliente.rpc("renombrar_sala",
+    { p_equipo_id: eq.id, p_nombre: nombre });
+  if (error) { alert(_porQue(error, "No se pudo renombrar.")); return; }
+  await cargarEquipos();
+}
+
+async function borrarSala(eq) {
+  //  Se pide escribir el nombre y no un «¿seguro?». Borrar una sala se
+  //  lleva su historial entero y no hay vuelta atrás; un botón de
+  //  confirmar al lado del de borrar se aprieta solo.
+  const dice = prompt("Esto borra la sala «" + eq.nombre + "» y todo su " +
+    "historial, para siempre.\n\nEscribí el nombre de la sala para " +
+    "confirmar:");
+  if ((dice || "").trim() !== eq.nombre) return;
+  const { error } = await cliente.rpc("borrar_sala", { p_equipo_id: eq.id });
+  if (error) { alert(_porQue(error, "No se pudo borrar.")); return; }
+  await cargarEquipos();
+}
+
+async function vincular(eq) {
+  const { data, error } = await cliente.rpc("codigo_de_sala",
+    { p_equipo_id: eq.id });
+  if (error) { alert(_porQue(error, "No se pudo pedir el código.")); return; }
+  const fila = Array.isArray(data) ? data[0] : data;
+  if (fila && fila.codigo) mostrarCodigo(eq.id, fila.codigo);
+}
+
+//  El código se muestra grande y con el paso a paso al lado. Es el único
+//  momento en que la persona tiene que copiar algo de una pantalla a
+//  otra, y es donde se pierde la gente.
+function mostrarCodigo(equipoId, codigo) {
+  const caja = _$("codigo-" + equipoId);
+  if (!caja) return;
+  caja.innerHTML = "";
+  caja.appendChild(_el("p", "sub", "Escribí este código en el portal del " +
+    "controlador, en Configuración → Nube. Vale por 30 minutos y se usa " +
+    "una sola vez."));
+  const c = _el("b", null, codigo);
+  c.style.cssText = "font-size:28px;letter-spacing:4px;display:block;" +
+    "margin:8px 0;font-family:ui-monospace,monospace";
+  caja.appendChild(c);
+  caja.appendChild(_el("p", "sub", "Cuando el controlador lo acepte, esta " +
+    "sala pasa a decir «controlador vinculado». Si el código venció, pedí " +
+    "otro con el mismo botón."));
+  _ver(caja, true);
+}
+
+function tarjetaSala(eq) {
+  const c = _el("section", "card");
+  c.style.marginBottom = "10px";
+
+  const cab = _el("div");
+  cab.style.cssText = "display:flex;justify-content:space-between;" +
+    "align-items:center;gap:8px;flex-wrap:wrap";
+  cab.appendChild(_el("b", null, eq.nombre));
+
+  //  El estado se dice en palabras y no sólo con un color: una sala sin
+  //  controlador se ve exactamente igual que una vinculada que todavía
+  //  no reportó, y son dos problemas distintos.
+  const vinculada = !!eq.serie;
+  const pill = _el("span", "pill",
+    vinculada ? "controlador " + eq.serie : "sin controlador");
+  cab.appendChild(pill);
+  c.appendChild(cab);
+
+  const acciones = _el("div");
+  acciones.style.marginTop = "10px";
+  if (vinculada) {
+    acciones.appendChild(_boton("Abrir", () => {
+      equipoAbierto = true;
+      LuxApp.abrirSala(eq);
+    }, "pri"));
+  }
+  acciones.appendChild(_boton("Renombrar", () => renombrarSala(eq)));
+  acciones.appendChild(_boton(
+    vinculada ? "Cambiar controlador" : "Vincular controlador",
+    () => vincular(eq)));
+  acciones.appendChild(_boton("Borrar", () => borrarSala(eq)));
+  c.appendChild(acciones);
+
+  const caja = _el("div", "oculto");
+  caja.id = "codigo-" + eq.id;
+  caja.style.cssText = "margin-top:10px;padding:10px;border-radius:8px;" +
+    "background:rgba(127,127,127,.12)";
+  c.appendChild(caja);
+
+  if (!vinculada) {
+    c.appendChild(_el("p", "sub", "Esta sala todavía no tiene controlador. " +
+      "Hasta que se vincule no hay mediciones ni configuración que mostrar."));
+  }
+  return c;
+}
+
 async function cargarEquipos() {
   const host = _$("lista-equipos");
   //  Mientras se espera, el panel DICE que está esperando. Un panel
@@ -324,41 +467,55 @@ async function cargarEquipos() {
 
   let data, error;
   try {
-    ({ data, error } = await cliente.from("equipos").select("id,nombre,serie"));
+    ({ data, error } = await cliente.from("equipos")
+       .select("id,nombre,serie").order("nombre"));
   } catch (e) { error = e; }
 
   //  El DOM se arma aparte y se cambia UNA vez, al final. Vaciarlo antes
   //  de saber si hay con qué llenarlo deja un panel en blanco si algo
   //  falla en el medio, y un panel en blanco no dice nada.
-  if (error || !Array.isArray(data)) {
-    //  Por `textContent`, no concatenado en `innerHTML`: un mensaje de
-    //  error puede reflejar parte de lo que se pidio, y concatenarlo en
-    //  HTML lo vuelve un camino para inyectar marcado.
-    host.innerHTML = "";
-    const e = document.createElement("p");
-    e.className = "sub err";
-    e.textContent = "No se pudo leer la lista de salas" +
-      (error && error.message ? ": " + error.message : ".");
-    host.appendChild(e);
-    return;
-  }
-  if (!data.length) {
-    host.innerHTML = '<p class="sub">Todavía no hay ninguna sala asociada a ' +
-      'tu cuenta. Se dan de alta desde el panel de Supabase.</p>';
-    return;
-  }
   const frag = document.createDocumentFragment();
-  data.forEach(eq => {
-    const b = document.createElement("button");
-    b.textContent = eq.nombre;
-    b.style.marginBottom = "8px";
-    b.onclick = () => { equipoAbierto = true; LuxApp.abrirSala(eq); };
-    frag.appendChild(b);
-  });
+
+  if (error || !Array.isArray(data)) {
+    host.innerHTML = "";
+    host.appendChild(_el("p", "sub err",
+      "No se pudo leer la lista de salas" +
+      (error && error.message ? ": " + error.message : ".")));
+    host.appendChild(_boton("Reintentar", () => cargarEquipos()));
+    return;
+  }
+
+  if (!data.length) {
+    frag.appendChild(_el("p", "sub", "Todavía no tenés ninguna sala. " +
+      "Creá la primera y después vinculale su controlador."));
+  }
+  data.forEach(eq => frag.appendChild(tarjetaSala(eq)));
+
+  const nueva = _boton("Nueva sala", crearSala, "pri");
+  nueva.style.marginTop = "4px";
+  frag.appendChild(nueva);
+
   host.innerHTML = "";
   host.appendChild(frag);
-  if (data.length === 1) { equipoAbierto = true; LuxApp.abrirSala(data[0]); }
+
+  //  Con una sola sala YA VINCULADA se entra derecho: es el caso de
+  //  todos los días. Si no tiene controlador no se entra, porque adentro
+  //  no habría nada que mirar y el que la acaba de crear necesita ver
+  //  justamente el botón de vincular.
+  if (data.length === 1 && data[0].serie && !equipoAbierto) {
+    equipoAbierto = true;
+    LuxApp.abrirSala(data[0]);
+  }
 }
+
+//  Desde adentro de una sala siempre se puede volver a la lista. Sin
+//  esto, el que tiene una sola sala entra derecho y no puede llegar
+//  nunca a renombrarla ni a crear la segunda.
+_$("btn-salas").onclick = () => {
+  equipoAbierto = false;
+  LuxApp.cerrarSala();
+  cargarEquipos();
+};
 
 // ── Pestañas y acciones ────────────────────────────────────────
 document.querySelectorAll("#pestanas button").forEach(b =>
