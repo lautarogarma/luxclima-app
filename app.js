@@ -88,9 +88,25 @@ function siguiente(v, p, subir) {
 //  hacia el equipo: no acepta conexiones entrantes, y no debe. Un
 //  puerto abierto hacia un controlador que maneja una válvula de gas lo
 //  encuentran los buscadores de dispositivos expuestos en horas.
-async function mandar(codigo, arg1, arg2, claveVuelo) {
+async function mandar(codigo, arg1, arg2, claveVuelo, queDice) {
   if (!equipoActual) return;
-  if (claveVuelo !== undefined) enVuelo.set(claveVuelo, Date.now());
+
+  //  Una orden por control a la vez. Sin esto, dos toques rápidos al «+»
+  //  con la red lenta insertaban DOS comandos: el equipo aplicaba los
+  //  dos y el operador terminaba con el doble de lo que creía haber
+  //  pedido. La fila decía «enviando…» pero seguía aceptando toques,
+  //  que es lo peor de los dos mundos: parece bloqueada y no lo está.
+  //
+  //  No se encola el segundo. Encolar «subí a 900» detrás de «subí a
+  //  850» deja al operador esperando dos confirmaciones para un solo
+  //  gesto, y si la primera se rechaza la segunda ya no tiene sentido.
+  if (claveVuelo !== undefined && enVuelo.has(claveVuelo)) {
+    aviso("Esperá la confirmación de lo anterior antes de volver a tocarlo.",
+          "warn");
+    return;
+  }
+  if (claveVuelo !== undefined)
+    enVuelo.set(claveVuelo, { desde: Date.now(), dice: queDice || "" });
   pintarTodo();
 
   const { data, error } = await sb.from("comandos").insert({
@@ -158,6 +174,99 @@ function aviso(t, clase) {
   // Ocho segundos, no dos: el texto lleva la causa de un rechazo, y una
   // causa que se va antes de leerla no sirve de nada.
   avisoT = setTimeout(() => { a.textContent = ""; a.className = "aviso-linea"; }, 8000);
+}
+
+// ------------------------------------------------------------
+//  Preguntar antes de hacer algo que cuesta deshacer
+// ------------------------------------------------------------
+//  Propio y no `confirm()`/`prompt()`. Los nativos cambian de forma
+//  según navegador y sistema, ignoran el tema oscuro, no admiten
+//  explicación ni validación, y en el teléfono aparecen lejos de lo que
+//  los originó — con el nombre de la sala recortado, justo cuando hay
+//  que escribirlo para confirmar un borrado.
+//
+//  Devuelve una promesa: `null` si se cancela; el texto escrito si pide
+//  campo, o `true` si es sólo confirmar.
+function dialogo(o) {
+  return new Promise(resolve => {
+    const fondo = document.createElement("div");
+    fondo.className = "modal-fondo";
+    const caja = document.createElement("div");
+    caja.className = "modal";
+    caja.setAttribute("role", "dialog");
+    caja.setAttribute("aria-modal", "true");
+
+    const h = document.createElement("h3");
+    h.textContent = o.titulo;
+    caja.appendChild(h);
+
+    if (o.texto) {
+      const p = document.createElement("p");
+      p.className = "sub";
+      p.textContent = o.texto;
+      caja.appendChild(p);
+    }
+
+    let campo = null;
+    if (o.campo !== undefined) {
+      const lab = document.createElement("label");
+      lab.className = "sub";
+      lab.textContent = o.campo;
+      lab.setAttribute("for", "modal-campo");
+      campo = document.createElement("input");
+      campo.id = "modal-campo";
+      campo.type = "text";
+      campo.value = o.valor || "";
+      campo.autocomplete = "off";
+      caja.append(lab, campo);
+    }
+
+    const err = document.createElement("p");
+    err.className = "sub err";
+    caja.appendChild(err);
+
+    const fila = document.createElement("div");
+    fila.className = "modal-botones";
+    const cancelar = document.createElement("button");
+    cancelar.textContent = "Cancelar";
+    const aceptar = document.createElement("button");
+    aceptar.textContent = o.aceptar || "Confirmar";
+    aceptar.className = o.peligro ? "peligro" : "pri";
+    //  Un aviso no se «cancela»: no hay nada que elegir. Dejar el botón
+    //  de cancelar al lado de uno que hace lo mismo obliga a decidir
+    //  entre dos opciones idénticas.
+    if (!o.soloAceptar) fila.appendChild(cancelar);
+    fila.appendChild(aceptar);
+    caja.appendChild(fila);
+
+    const cerrar = r => {
+      document.removeEventListener("keydown", tecla);
+      if (fondo.remove) fondo.remove();
+      resolve(r);
+    };
+    const tecla = e => {
+      if (e.key === "Escape") cerrar(null);
+      if (e.key === "Enter" && campo) aceptar.onclick();
+    };
+    cancelar.onclick = () => cerrar(null);
+    aceptar.onclick = () => {
+      if (!campo) return cerrar(true);
+      const v = (campo.value || "").trim();
+      //  La validación se dice EN EL DIÁLOGO y no en un aviso que
+      //  aparece después de cerrarlo: cerrar y volver a abrir pierde lo
+      //  que la persona ya había escrito.
+      const problema = o.validar ? o.validar(v) : (v ? null : "Escribí algo.");
+      if (problema) { err.textContent = problema; campo.focus(); return; }
+      cerrar(v);
+    };
+    fondo.onclick = e => { if (e.target === fondo) cerrar(null); };
+    document.addEventListener("keydown", tecla);
+
+    fondo.appendChild(caja);
+    document.body.appendChild(fondo);
+    if (campo && campo.focus) { campo.focus(); if (campo.select) campo.select(); }
+    else if (aceptar.focus) aceptar.focus();
+  });
 }
 
 // ------------------------------------------------------------
@@ -356,13 +465,19 @@ function pintarConfig() {
 function filaControl(id) {
   const p = window.PARAMETROS[id];
   const v = ultimaConfig[id];
+  const pendiente = enVuelo.get(id);
   const row = document.createElement("div");
-  row.className = "fila" + (enVuelo.has(id) ? " esperando" : "");
+  row.className = "fila" + (pendiente ? " esperando" : "");
 
   const t = document.createElement("span");
   t.className = "fila-t";
   t.textContent = p.t;
   row.appendChild(t);
+
+  //  Mientras espera confirmación, el control se DESHABILITA de verdad.
+  //  Un control gris que igual dispara su acción es peor que uno
+  //  habilitado: se ve bloqueado, se toca, y la orden sale igual.
+  const trabado = !!pendiente;
 
   if (p.k === "llave") {
     const b = document.createElement("button");
@@ -370,7 +485,9 @@ function filaControl(id) {
     b.setAttribute("role", "switch");
     b.setAttribute("aria-checked", v ? "true" : "false");
     b.setAttribute("aria-label", p.t);
-    b.onclick = () => mandar(CMD.PARAMETRO, id, v ? 0 : 1, id);
+    b.disabled = trabado;
+    b.onclick = () => mandar(CMD.PARAMETRO, id, v ? 0 : 1, id,
+                             p.t + " → " + fmtValor(v ? 0 : 1, p));
     row.appendChild(b);
   } else if (p.k === "lista") {
     const sel = document.createElement("select");
@@ -381,19 +498,38 @@ function filaControl(id) {
       sel.appendChild(op);
     });
     sel.value = v;
-    sel.onchange = () => mandar(CMD.PARAMETRO, id, +sel.value, id);
+    sel.disabled = trabado;
+    sel.onchange = () => mandar(CMD.PARAMETRO, id, +sel.value, id,
+                                p.t + " → " + fmtValor(+sel.value, p));
     row.appendChild(sel);
   } else {
     const val = document.createElement("span");
     val.className = "fila-v";
+    //  Se sigue mostrando el valor CONFIRMADO, no el pedido. Mostrar el
+    //  pedido haría creer que ya está aplicado; lo pedido se dice al
+    //  lado del nombre, que es donde no se confunde con el estado real.
     val.textContent = fmtValor(v, p);
     const menos = document.createElement("button");
     menos.textContent = "−"; menos.setAttribute("aria-label", "bajar " + p.t);
-    menos.onclick = () => mandar(CMD.PARAMETRO, id, siguiente(v, p, false), id);
+    menos.disabled = trabado;
+    menos.onclick = () => mandar(CMD.PARAMETRO, id, siguiente(v, p, false), id,
+                                 p.t + " → " + fmtValor(siguiente(v, p, false), p));
     const mas = document.createElement("button");
     mas.textContent = "+"; mas.setAttribute("aria-label", "subir " + p.t);
-    mas.onclick = () => mandar(CMD.PARAMETRO, id, siguiente(v, p, true), id);
+    mas.disabled = trabado;
+    mas.onclick = () => mandar(CMD.PARAMETRO, id, siguiente(v, p, true), id,
+                               p.t + " → " + fmtValor(siguiente(v, p, true), p));
     row.append(val, menos, mas);
+  }
+
+  //  Qué se pidió, con todas las letras. «enviando…» a secas no dice si
+  //  lo que viaja es lo que uno quiso: con dos toques seguidos, saber
+  //  cuál de los dos valores está en camino es justamente el problema.
+  if (pendiente && pendiente.dice) {
+    const q = document.createElement("span");
+    q.className = "fila-pendiente";
+    q.textContent = "Esperando: " + pendiente.dice;
+    row.appendChild(q);
   }
   return row;
 }
@@ -410,7 +546,13 @@ function pintarEquipos() {
   }
   sal.forEach(o => {
     const row = document.createElement("div");
-    row.className = "fila";
+    //  UNA operación pendiente por canal, sea reasignarlo o sacarlo de
+    //  servicio. Son dos órdenes distintas sobre el mismo relé y
+    //  dejarlas correr en paralelo permite pedir «este relé pasa a ser
+    //  humidificador» y «este relé queda fuera de servicio» a la vez.
+    const pendiente = enVuelo.get("rele" + o.ch) || enVuelo.get("fuera" + o.ch);
+    const trabado = !!pendiente;
+    row.className = "fila" + (trabado ? " esperando" : "");
     const t = document.createElement("span");
     t.className = "fila-t";
     t.textContent = "Relé " + o.ch;
@@ -422,7 +564,31 @@ function pintarEquipos() {
       sel.appendChild(op);
     });
     sel.value = o.tipo || 0;
-    sel.onchange = () => mandar(CMD.ASIGNAR_SALIDA, o.ch, +sel.value, "rele" + o.ch);
+    sel.disabled = trabado;
+    //  Cambiar qué equipo maneja un relé NO es un ajuste de operación:
+    //  es tocar la instalación. Un toque accidental en una pantalla que
+    //  se abrió para mirar horas de uso puede dejar la extracción
+    //  conectada al humidificador, y eso no se nota hasta que hace
+    //  falta extraer. Por eso se pregunta, y la pregunta dice el antes
+    //  y el después con las palabras del operador.
+    sel.onchange = async () => {
+      const nuevo = +sel.value;
+      const antes = EQUIPOS[o.tipo || 0], despues = EQUIPOS[nuevo];
+      const ok = await dialogo({
+        titulo: "Cambiar qué maneja el relé " + o.ch,
+        texto: "Ahora maneja «" + antes + "» y pasaría a manejar «" +
+               despues + "». Esto cambia la instalación, no un ajuste " +
+               "del día: si el cableado no acompaña, el equipo va a " +
+               "accionar el aparato equivocado.",
+        aceptar: "Cambiar",
+        peligro: true,
+      });
+      //  Se vuelve a lo que hay DE VERDAD, no a lo elegido: el
+      //  desplegable no puede quedar mostrando algo que nadie confirmó.
+      if (!ok) { sel.value = o.tipo || 0; return; }
+      mandar(CMD.ASIGNAR_SALIDA, o.ch, nuevo, "rele" + o.ch,
+             "relé " + o.ch + " → " + despues);
+    };
     const est = document.createElement("span");
     //  Fuera de servicio gana a todo: si alguien ya anotó que ese relé
     //  no anda, «apagado» no es la noticia, y un «no cumple» sería
@@ -437,13 +603,23 @@ function pintarEquipos() {
     const b = document.createElement("button");
     b.textContent = o.fuera ? "volver" : "fuera";
     b.className = "chico" + (o.fuera ? " marcado" : "");
-    b.disabled = !o.tipo;
+    //  Sin equipo asignado no hay nada que sacar de servicio; y con una
+    //  orden en camino sobre este relé, tampoco.
+    b.disabled = !o.tipo || trabado;
     b.setAttribute("aria-label",
         (o.fuera ? "volver a servicio el relé " : "marcar fuera de servicio el relé ")
         + o.ch);
     b.onclick = () => mandar(CMD.PARAMETRO, window.PAR.SALIDA_FUERA,
-                             (o.ch << 8) | (o.fuera ? 0 : 1), "fuera" + o.ch);
+                             (o.ch << 8) | (o.fuera ? 0 : 1), "fuera" + o.ch,
+                             "relé " + o.ch + (o.fuera ? " → vuelve a servicio"
+                                                       : " → fuera de servicio"));
     row.append(t, sel, est, b);
+    if (pendiente && pendiente.dice) {
+      const q = document.createElement("span");
+      q.className = "fila-pendiente";
+      q.textContent = "Esperando: " + pendiente.dice;
+      row.appendChild(q);
+    }
     host.appendChild(row);
   });
 }
@@ -713,4 +889,4 @@ function pestana(cual) {
 }
 
 window.LuxApp = { init(cliente) { sb = cliente; }, abrirSala, cerrarSala,
-                  pestana, mandar, CMD, refrescar };
+                  pestana, mandar, CMD, refrescar, dialogo };

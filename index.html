@@ -14,7 +14,7 @@
 :root{
   --fondo:#0C110E; --tarjeta:#151E18; --borde:#6e7681; --linea:#263329;
   --texto:#E4EBE5; --tenue:#8A9B8F;
-  --ok:#5BC46B; --atencion:#D9A227; --peligro:#E2564C; --marca:#76A868;
+  --ok:#5BC46B; --atencion:#D9A227; --peligro:#CC4437; --marca:#76A868;
   --accion:#58a6ff; --sobreClaro:#08130B;
 }
 *{box-sizing:border-box}
@@ -88,7 +88,30 @@ button.chico.marcado{background:var(--atencion);color:var(--sobreClaro);
    general no dice cuál, y si se tocaron dos cosas seguidas hay que
    adivinar de cuál habla. */
 .fila.esperando .fila-v{color:var(--atencion)}
-.fila.esperando .fila-t::after{content:" · enviando…";color:var(--atencion);font-size:13px}
+/* Lo pedido, con todas las letras y en su propio renglón. «Enviando…»
+   a secas no dice QUÉ viaja, que es justo lo que uno necesita saber
+   cuando tocó dos veces sin querer. */
+.fila-pendiente{grid-column:1/-1;font-size:13px;color:var(--atencion);
+                margin:2px 0 0;font-variant-numeric:tabular-nums}
+
+/* ---- Teléfonos angostos ----
+   A 320 px la tarjeta deja unos 264 px útiles, y valor (92) más dos
+   botones (112) más los huecos (24) ya se comen 228: al nombre le
+   quedaban 36 px. «Temperatura máxima de noche» no entra en 36 px, así
+   que la grilla se desbordaba o se comía el texto. Es un defecto grave
+   en algo que se vende para usar desde el teléfono.
+
+   Por debajo de 430 px la fila pasa a dos renglones: el nombre a todo
+   el ancho arriba, y abajo el valor con sus mandos. Nada se achica
+   —los blancos táctiles siguen en 44 px—, se reacomoda. */
+@media (max-width:430px){
+  .fila{grid-template-columns:1fr auto auto;row-gap:6px}
+  .fila-t{grid-column:1/-1}
+  .fila-v{text-align:left;min-width:0;flex:1}
+  .fila select{max-width:100%;grid-column:1/-1}
+  .fila .llave{justify-self:end}
+  .fila button:not(.llave):not(.chico){width:64px}
+}
 
 .llave{width:64px;min-height:36px;height:36px;border-radius:18px;
        background:var(--linea);border:1px solid var(--borde);position:relative;
@@ -98,6 +121,23 @@ button.chico.marcado{background:var(--atencion);color:var(--sobreClaro);
 .llave.on{background:var(--ok);border-color:var(--ok)}
 .llave.on::after{left:32px}
 @media (prefers-reduced-motion:reduce){.llave::after{transition:none}}
+
+/* ---- El diálogo propio ----
+   Reemplaza a `prompt`/`confirm`/`alert`, que cambian de forma según el
+   navegador, ignoran el tema oscuro, no admiten explicación ni
+   validación, y en el teléfono aparecen lejos de lo que los originó —
+   con el nombre de la sala recortado, justo cuando hay que escribirlo
+   para confirmar un borrado. */
+.modal-fondo{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:50;
+             display:flex;align-items:center;justify-content:center;padding:16px}
+.modal{background:var(--tarjeta);border:1px solid var(--borde);border-radius:14px;
+       padding:18px;max-width:460px;width:100%;max-height:90vh;overflow:auto}
+.modal h3{margin:0 0 8px;font-size:18px}
+.modal .sub{margin:0 0 10px}
+.modal-botones{display:flex;gap:8px;margin-top:16px}
+.modal-botones button{flex:1}
+button.peligro{background:var(--peligro);color:#fff;border-color:var(--peligro);
+               font-weight:600}
 
 .leyenda{display:flex;flex-wrap:wrap;gap:14px;margin-top:10px;font-size:13px}
 .leyenda b{font-weight:600}
@@ -361,22 +401,52 @@ function _porQue(error, siNo) {
   return (error && (error.message || error.hint)) || siNo;
 }
 
+//  El diálogo propio vive en app.js y se usa desde acá. Reemplaza a
+//  `prompt`/`alert`: los nativos cambian según navegador y sistema,
+//  ignoran el tema oscuro y no dejan explicar ni validar nada.
+const preguntar = o => LuxApp.dialogo(o);
+const avisarModal = (titulo, texto) =>
+  LuxApp.dialogo({ titulo, texto, aceptar: "Entendido", soloAceptar: true });
+
 async function crearSala() {
-  const nombre = (prompt("¿Cómo se llama la sala nueva?") || "").trim();
+  const nombre = await preguntar({
+    titulo: "Nueva sala",
+    texto: "Cada sala tiene su propio controlador. Después de crearla te " +
+           "damos un código para vincularlo.",
+    campo: "Nombre de la sala",
+    aceptar: "Crear",
+    validar: v => !v ? "Escribí un nombre."
+                : v.length > 60 ? "Máximo 60 caracteres." : null,
+  });
   if (!nombre) return;
   const { data, error } = await cliente.rpc("crear_sala", { p_nombre: nombre });
-  if (error) { alert(_porQue(error, "No se pudo crear la sala.")); return; }
+  if (error) {
+    await avisarModal("No se pudo crear la sala",
+                      _porQue(error, "No se pudo crear la sala."));
+    return;
+  }
   const fila = Array.isArray(data) ? data[0] : data;
   await cargarEquipos();
   if (fila && fila.codigo) mostrarCodigo(fila.equipo_id, fila.codigo);
 }
 
 async function renombrarSala(eq) {
-  const nombre = (prompt("Nombre nuevo para la sala:", eq.nombre) || "").trim();
+  const nombre = await preguntar({
+    titulo: "Renombrar «" + eq.nombre + "»",
+    campo: "Nombre nuevo",
+    valor: eq.nombre,
+    aceptar: "Guardar",
+    validar: v => !v ? "Escribí un nombre."
+                : v.length > 60 ? "Máximo 60 caracteres." : null,
+  });
   if (!nombre || nombre === eq.nombre) return;
   const { error } = await cliente.rpc("renombrar_sala",
     { p_equipo_id: eq.id, p_nombre: nombre });
-  if (error) { alert(_porQue(error, "No se pudo renombrar.")); return; }
+  if (error) {
+    await avisarModal("No se pudo renombrar",
+                      _porQue(error, "No se pudo renombrar."));
+    return;
+  }
   await cargarEquipos();
 }
 
@@ -384,19 +454,33 @@ async function borrarSala(eq) {
   //  Se pide escribir el nombre y no un «¿seguro?». Borrar una sala se
   //  lleva su historial entero y no hay vuelta atrás; un botón de
   //  confirmar al lado del de borrar se aprieta solo.
-  const dice = prompt("Esto borra la sala «" + eq.nombre + "» y todo su " +
-    "historial, para siempre.\n\nEscribí el nombre de la sala para " +
-    "confirmar:");
-  if ((dice || "").trim() !== eq.nombre) return;
+  const dice = await preguntar({
+    titulo: "Borrar «" + eq.nombre + "»",
+    texto: "Se borra la sala con TODO su historial, sus mediciones y sus " +
+           "órdenes. No hay vuelta atrás. Si sólo querés cambiar de " +
+           "controlador, usá «Cambiar controlador» en vez de borrar.",
+    campo: "Escribí «" + eq.nombre + "» para confirmar",
+    aceptar: "Borrar para siempre",
+    peligro: true,
+    validar: v => v === eq.nombre ? null : "El nombre no coincide.",
+  });
+  if (dice !== eq.nombre) return;
   const { error } = await cliente.rpc("borrar_sala", { p_equipo_id: eq.id });
-  if (error) { alert(_porQue(error, "No se pudo borrar.")); return; }
+  if (error) {
+    await avisarModal("No se pudo borrar", _porQue(error, "No se pudo borrar."));
+    return;
+  }
   await cargarEquipos();
 }
 
 async function vincular(eq) {
   const { data, error } = await cliente.rpc("codigo_de_sala",
     { p_equipo_id: eq.id });
-  if (error) { alert(_porQue(error, "No se pudo pedir el código.")); return; }
+  if (error) {
+    await avisarModal("No se pudo pedir el código",
+                      _porQue(error, "No se pudo pedir el código."));
+    return;
+  }
   const fila = Array.isArray(data) ? data[0] : data;
   if (fila && fila.codigo) mostrarCodigo(eq.id, fila.codigo);
 }
