@@ -37,6 +37,19 @@ const VIEJO_S = 90;
 
 let sb = null, equipoActual = null, timer = null;
 let ultimoEstado = null, ultimaConfig = null;
+
+//  ── Qué puede hacer quien está mirando ──
+//  Los roles ya existen en la base y las políticas de fila los aplican:
+//  `lectura` no puede insertar un comando aunque lo intente. Lo que
+//  faltaba era que la interfaz DIJERA eso, en vez de ofrecer controles
+//  que la base va a rechazar — un botón que se toca y devuelve un error
+//  de permisos es peor que uno que explica por qué está apagado.
+//
+//  `dueno` hace además de instalador: es quien da de alta la sala y
+//  vincula el controlador. No se inventa un cuarto rol para eso.
+let rolActual = null;
+const puedeOperar = () => rolActual === "dueno" || rolActual === "operador";
+const puedeInstalar = () => rolActual === "dueno";
 // Comandos pedidos y todavía sin resolver, por identificador de
 // parámetro. Es lo que permite marcar EL control que está esperando, y
 // no un cartel general que no dice cuál.
@@ -432,15 +445,33 @@ function pintarConfig() {
     return;
   }
   const porSeccion = new Map();
+  //  Los de instalación salen de su sección y se juntan al final, en su
+  //  propia tarjeta. Un operador que entra a ajustar riego o humedad
+  //  compartía pantalla con direcciones de bus y ruteos de equipo:
+  //  palabras técnicas, cambios que no se deshacen de forma obvia, y
+  //  presentados igual que un objetivo de humedad. Cuando todo se ve
+  //  igual de seguro de tocar, todo se toca.
+  const instalacion = [];
   Object.keys(window.PARAMETROS).forEach(k => {
     const id = +k;
     if (ultimaConfig[id] === undefined) return;
+    if (window.PARAMETROS[id].inst) { instalacion.push(id); return; }
     const s = window.PARAMETROS[id].s || "Otros";
     if (!porSeccion.has(s)) porSeccion.set(s, []);
     porSeccion.get(s).push(id);
   });
 
   host.innerHTML = "";
+
+  //  Si esta persona no puede ordenar, se dice UNA vez y arriba, en vez
+  //  de repetirlo en cada fila.
+  if (!puedeOperar()) {
+    const c = tarjeta(null);
+    c.appendChild(_p("sub", "Tu rol en esta sala es de sólo lectura: podés " +
+      "ver todo y no cambiar nada. Para operarla, pedile al dueño de la " +
+      "sala que te cambie el rol."));
+    host.appendChild(c);
+  }
   ORDEN.forEach(nombre => {
     const ids = porSeccion.get(nombre);
     if (!ids || !ids.length) return;
@@ -458,8 +489,35 @@ function pintarConfig() {
     host.appendChild(c);
   });
 
+  //  ── Instalación y servicio ──
+  //  Va al final, aparte, y con el motivo escrito. No se ESCONDE: quien
+  //  no puede tocarla tiene que ver que existe y por qué no le
+  //  corresponde, o va a buscarla creyendo que la aplicación no la
+  //  tiene.
+  if (instalacion.length) {
+    const c = tarjeta("Instalación y servicio");
+    c.appendChild(_p("sub", puedeInstalar()
+      ? "Esto describe CÓMO está armada la sala: qué equipo hay en cada " +
+        "demanda y en qué dirección del bus responde cada nodo. Se toca en " +
+        "la puesta en marcha, no en el día a día — si no coincide con el " +
+        "cableado, el equipo acciona el aparato equivocado."
+      : "Esto describe cómo está armada la sala y sólo lo cambia el dueño. " +
+        "Se muestra para que sepas qué hay configurado."));
+    instalacion.forEach(id => c.appendChild(filaControl(id)));
+    host.appendChild(c);
+  }
+
   if (!host.children.length)
     host.innerHTML = '<p class="sub">El equipo todavía no mandó su configuración.</p>';
+}
+
+//  Un párrafo con texto puesto por `textContent`, que es la única forma
+//  correcta de meter texto en la página.
+function _p(clase, texto) {
+  const e = document.createElement("p");
+  e.className = clase;
+  e.textContent = texto;
+  return e;
 }
 
 function filaControl(id) {
@@ -477,7 +535,13 @@ function filaControl(id) {
   //  Mientras espera confirmación, el control se DESHABILITA de verdad.
   //  Un control gris que igual dispara su acción es peor que uno
   //  habilitado: se ve bloqueado, se toca, y la orden sale igual.
-  const trabado = !!pendiente;
+  //
+  //  Y además el rol: los de instalación sólo los toca el dueño. La
+  //  base ya lo aplica —una orden de `lectura` se rechaza por política
+  //  de fila—, pero ofrecer el control y que la base lo rechace después
+  //  es peor que no ofrecerlo: el operador no sabe si se rompió algo.
+  const permitido = p.inst ? puedeInstalar() : puedeOperar();
+  const trabado = !!pendiente || !permitido;
 
   if (p.k === "llave") {
     const b = document.createElement("button");
@@ -530,6 +594,14 @@ function filaControl(id) {
     q.className = "fila-pendiente";
     q.textContent = "Esperando: " + pendiente.dice;
     row.appendChild(q);
+  } else if (!permitido && puedeOperar()) {
+    //  Sólo cuando el motivo es EL CONTROL y no la persona: si el rol
+    //  es de sólo lectura ya lo dice el cartel de arriba, y repetirlo en
+    //  sesenta filas es ruido.
+    const q = document.createElement("span");
+    q.className = "fila-pendiente";
+    q.textContent = "Sólo lo cambia el dueño de la sala";
+    row.appendChild(q);
   }
   return row;
 }
@@ -564,7 +636,7 @@ function pintarEquipos() {
       sel.appendChild(op);
     });
     sel.value = o.tipo || 0;
-    sel.disabled = trabado;
+    sel.disabled = trabado || !puedeInstalar();
     //  Cambiar qué equipo maneja un relé NO es un ajuste de operación:
     //  es tocar la instalación. Un toque accidental en una pantalla que
     //  se abrió para mirar horas de uso puede dejar la extracción
@@ -604,8 +676,10 @@ function pintarEquipos() {
     b.textContent = o.fuera ? "volver" : "fuera";
     b.className = "chico" + (o.fuera ? " marcado" : "");
     //  Sin equipo asignado no hay nada que sacar de servicio; y con una
-    //  orden en camino sobre este relé, tampoco.
-    b.disabled = !o.tipo || trabado;
+    //  orden en camino sobre este relé, tampoco. Marcar un relé fuera de
+    //  servicio SÍ es operación: lo hace quien está arreglando algo, no
+    //  quien instaló la sala.
+    b.disabled = !o.tipo || trabado || !puedeOperar();
     b.setAttribute("aria-label",
         (o.fuera ? "volver a servicio el relé " : "marcar fuera de servicio el relé ")
         + o.ch);
@@ -780,17 +854,71 @@ const CURVAS = [
   ["Sustrato", "suelo_pct10", "#9A7B5A", 20, v => (v / 10).toFixed(1) + " %"],
 ];
 
+//  El ancho de la banda de abajo, donde viven las horas. Sin ella el
+//  gráfico mostraba una forma pero no dejaba responder «¿a qué hora
+//  empezó el pico?», que es para lo único que uno abre el historial
+//  cuando algo salió mal.
+const EJE_ALTO = 34;
+
+//  Cada serie lleva ADEMÁS de su color un trazo distinto. Con el color
+//  solo, quien no lo distingue bien —o mira la pantalla con poca luz—
+//  no puede asociar cada línea con su variable, y la leyenda de al lado
+//  no ayuda si las cuatro líneas se ven iguales.
+const TRAZOS = ["", "7 4", "2 4", "10 4 2 4"];
+
+function svgEl(tag) {
+  return document.createElementNS("http://www.w3.org/2000/svg", tag);
+}
+
+function hhmm(iso) {
+  const d = new Date(iso);
+  return String(d.getHours()).padStart(2, "0") + ":" +
+         String(d.getMinutes()).padStart(2, "0");
+}
+
 function dibujarCurvas(host, filas) {
   const W = 860, H = 240, PAD = 6;
+  const ALTO = H + EJE_ALTO;
+  const PISO = H - PAD;                 // dónde termina el área de dibujo
   host.innerHTML = "";
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+  const svg = svgEl("svg");
+  svg.setAttribute("viewBox", "0 0 " + W + " " + ALTO);
   svg.setAttribute("width", "100%");
   svg.setAttribute("role", "img");
   const leyenda = document.createElement("div");
   leyenda.className = "leyenda";
 
-  CURVAS.forEach(([nombre, campo, color, umbral, fmt]) => {
+  const equis = i => PAD + (i / (filas.length - 1)) * (W - 2 * PAD);
+
+  // ── El eje de tiempo ──
+  //  Cinco marcas: el principio, el final y tres en el medio. Menos no
+  //  alcanza para ubicar nada; más satura una banda de 34 px.
+  const marcas = [0, 0.25, 0.5, 0.75, 1]
+    .map(f => Math.round(f * (filas.length - 1)));
+  marcas.forEach((idx, n) => {
+    const x = equis(idx);
+    const linea = svgEl("line");
+    linea.setAttribute("x1", x); linea.setAttribute("x2", x);
+    linea.setAttribute("y1", PAD); linea.setAttribute("y2", PISO);
+    linea.setAttribute("stroke", "#2a3a30");
+    linea.setAttribute("stroke-width", "1");
+    svg.appendChild(linea);
+
+    const t = svgEl("text");
+    t.setAttribute("x", x);
+    t.setAttribute("y", H + 16);
+    //  Las de las puntas se corren hacia adentro: centradas se salen
+    //  del dibujo y el navegador las recorta.
+    t.setAttribute("text-anchor", n === 0 ? "start"
+                                : n === marcas.length - 1 ? "end" : "middle");
+    t.setAttribute("fill", "#8aa294");
+    t.setAttribute("font-size", "13");
+    t.textContent = hhmm(filas[idx].momento);
+    svg.appendChild(t);
+  });
+
+  const series = [];
+  CURVAS.forEach(([nombre, campo, color, umbral, fmt], n) => {
     const vals = filas.map(f => f[campo]).filter(v => v !== null && v !== undefined);
     if (vals.length < 2) return;
     const lo = Math.min(...vals), hi = Math.max(...vals);
@@ -798,38 +926,106 @@ function dibujarCurvas(host, filas) {
     //  dibujado como si fuera un evento. Debajo del umbral se dibuja
     //  chata en el medio y la leyenda dice «estable».
     const estable = (hi - lo) < umbral;
+    const trazo = TRAZOS[n % TRAZOS.length];
     let d = "";
     filas.forEach((f, i) => {
       const v = f[campo];
       if (v === null || v === undefined) return;
-      const x = PAD + (i / (filas.length - 1)) * (W - 2 * PAD);
+      const x = equis(i);
       const y = estable ? H / 2
-              : H - PAD - ((v - lo) / (hi - lo)) * (H - 2 * PAD);
+              : PISO - ((v - lo) / (hi - lo)) * (PISO - PAD);
       d += (d ? "L" : "M") + x.toFixed(1) + " " + y.toFixed(1);
     });
-    const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    const p = svgEl("path");
     p.setAttribute("d", d); p.setAttribute("fill", "none");
     p.setAttribute("stroke", color); p.setAttribute("stroke-width", "2");
+    if (trazo) p.setAttribute("stroke-dasharray", trazo);
     svg.appendChild(p);
+    series.push({ nombre, campo, fmt });
 
     const li = document.createElement("div");
     li.style.color = color;
-    li.innerHTML = "<b></b><span></span>";
-    li.querySelector("b").textContent = nombre;
-    li.querySelector("span").textContent = estable
+    //  El trazo se repite en la leyenda: si la línea del gráfico es de
+    //  puntos, la muestra de la leyenda también, y así se pueden
+    //  emparejar sin depender del color.
+    const muestra = svgEl("svg");
+    muestra.setAttribute("width", "30");
+    muestra.setAttribute("height", "10");
+    muestra.setAttribute("aria-hidden", "true");
+    muestra.style.marginRight = "6px";
+    const ml = svgEl("line");
+    ml.setAttribute("x1", "0"); ml.setAttribute("x2", "30");
+    ml.setAttribute("y1", "5"); ml.setAttribute("y2", "5");
+    ml.setAttribute("stroke", color); ml.setAttribute("stroke-width", "2");
+    if (trazo) ml.setAttribute("stroke-dasharray", trazo);
+    muestra.appendChild(ml);
+    const b = document.createElement("b");
+    b.textContent = nombre;
+    const s = document.createElement("span");
+    s.textContent = estable
       ? " estable en " + fmt(vals[vals.length - 1])
       : " " + fmt(lo) + " a " + fmt(hi);
+    li.append(muestra, b, s);
     leyenda.appendChild(li);
   });
 
+  // ── El cursor ──
+  //  Una línea que sigue el dedo y una fila de valores debajo. Es lo
+  //  que convierte «se ve un pico» en «el pico fue a las 14:20 con 1400
+  //  ppm», que es la diferencia entre mirar y diagnosticar.
+  const cursor = svgEl("line");
+  cursor.setAttribute("y1", PAD); cursor.setAttribute("y2", PISO);
+  cursor.setAttribute("stroke", "#e8f0ea");
+  cursor.setAttribute("stroke-width", "1");
+  cursor.setAttribute("opacity", "0");
+  svg.appendChild(cursor);
+
+  const detalle = document.createElement("p");
+  detalle.className = "sub detalle-hist";
+  detalle.setAttribute("role", "status");
+  detalle.setAttribute("aria-live", "polite");
+  detalle.textContent = "Tocá el gráfico para ver los valores de un momento.";
+
+  const alSeguir = ev => {
+    const caja = svg.getBoundingClientRect ? svg.getBoundingClientRect() : null;
+    if (!caja || !caja.width) return;
+    const rel = (ev.clientX - caja.left) / caja.width;   // 0..1
+    const i = Math.max(0, Math.min(filas.length - 1,
+                                   Math.round(rel * (filas.length - 1))));
+    const x = equis(i);
+    cursor.setAttribute("x1", x); cursor.setAttribute("x2", x);
+    cursor.setAttribute("opacity", "1");
+    const partes = series.map(s => {
+      const v = filas[i][s.campo];
+      return s.nombre + " " + (v === null || v === undefined ? "—" : s.fmt(v));
+    });
+    detalle.textContent = hhmm(filas[i].momento) + " · " + partes.join("  ·  ");
+  };
+  const alSalir = () => {
+    cursor.setAttribute("opacity", "0");
+    detalle.textContent = "Tocá el gráfico para ver los valores de un momento.";
+  };
+  if (svg.addEventListener) {
+    svg.addEventListener("pointermove", alSeguir);
+    svg.addEventListener("pointerdown", alSeguir);
+    svg.addEventListener("pointerleave", alSalir);
+  }
+
   svg.setAttribute("aria-label",
-    "Curvas de las últimas 24 horas. Los valores están en la leyenda de abajo.");
+    "Curvas de las ultimas 24 horas, de " + hhmm(filas[0].momento) + " a " +
+    hhmm(filas[filas.length - 1].momento) +
+    ". Los valores estan en la leyenda de abajo.");
   host.appendChild(svg);
+  host.appendChild(detalle);
   host.appendChild(leyenda);
   const nota = document.createElement("p");
   nota.className = "sub";
+  //  La hora es la del TELÉFONO. Si el equipo está en otro huso, decirlo
+  //  acá evita buscar un pico a una hora que no existió en la sala.
   nota.textContent = "El eje vertical no tiene unidad: cada curva usa su propia " +
-    "escala para ocupar todo el alto. Lo que se compara es la forma, no la altura.";
+    "escala para ocupar todo el alto. Lo que se compara es la forma, no la " +
+    "altura. Las horas son las de este dispositivo (" +
+    Intl.DateTimeFormat().resolvedOptions().timeZone + ").";
   host.appendChild(nota);
 }
 
@@ -857,11 +1053,22 @@ async function refrescar() {
   pintarTodo();
 }
 
-function abrirSala(eq) {
+async function abrirSala(eq) {
   equipoActual = eq;
   ver($("equipos"), false);
   ver($("sala"), true);
   $("sala-nombre").textContent = eq.nombre;
+
+  //  El rol se pide ANTES de pintar. Pintar con el rol de la sala
+  //  anterior mostraría, por un instante, controles que esta persona no
+  //  puede usar acá — y ese instante alcanza para que alguien toque.
+  rolActual = null;
+  const { data } = await sb.from("miembros")
+    .select("rol").eq("equipo_id", eq.id).maybeSingle();
+  //  Sin respuesta se asume lo MENOS permisivo. Al revés, un error de
+  //  red dejaría la instalación abierta.
+  rolActual = (data && data.rol) || "lectura";
+
   refrescar();
   clearInterval(timer);
   timer = setInterval(refrescar, 10000);
