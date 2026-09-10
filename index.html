@@ -535,8 +535,14 @@ function tarjetaSala(eq) {
   acciones.appendChild(_boton(
     vinculada ? "Cambiar controlador" : "Vincular controlador",
     () => vincular(eq)));
+  acciones.appendChild(_boton("Gente", () => verGente(eq)));
   acciones.appendChild(_boton("Borrar", () => borrarSala(eq)));
   c.appendChild(acciones);
+
+  const gente = _el("div", "oculto");
+  gente.id = "gente-" + eq.id;
+  gente.style.cssText = "margin-top:10px";
+  c.appendChild(gente);
 
   const caja = _el("div", "oculto");
   caja.id = "codigo-" + eq.id;
@@ -600,6 +606,195 @@ async function cargarEquipos() {
     equipoAbierto = true;
     LuxApp.abrirSala(data[0]);
   }
+}
+
+// ── La gente de la sala ────────────────────────────────────────
+//  Invitar, cambiar el rol y sacar. Sin correo de por medio: si la
+//  persona no tenía cuenta, se le crea una y sale UNA VEZ una
+//  contraseña temporal que el dueño le pasa en mano. Después ella se la
+//  cambia sola, que eso sí funciona sin correo.
+
+const ROLES = [
+  ["dueno",    "Dueño",    "Todo, más invitar gente y tocar la instalación"],
+  ["operador", "Operador", "El día a día: consignas, riego, luz, alarmas"],
+  ["lectura",  "Lectura",  "Ve todo y no cambia nada"],
+];
+const nombreRol = r => (ROLES.find(x => x[0] === r) || [r, r])[1];
+
+async function verGente(eq) {
+  const caja = _$("gente-" + eq.id);
+  if (!caja) return;
+  //  Segundo toque: se cierra. Es una lista larga y molesta tenerla
+  //  abierta en las cuatro salas a la vez.
+  if (!caja.classList.contains("oculto") && caja.children.length) {
+    _ver(caja, false);
+    return;
+  }
+  caja.innerHTML = "";
+  caja.appendChild(_el("p", "sub", "Buscando…"));
+  _ver(caja, true);
+
+  const { data, error } = await cliente.rpc("miembros_de_sala",
+    { p_equipo_id: eq.id });
+  caja.innerHTML = "";
+  if (error) {
+    caja.appendChild(_el("p", "sub err",
+      _porQue(error, "No se pudo leer quién está en la sala.")));
+    return;
+  }
+
+  const lista = data || [];
+  //  Sólo el dueño administra. Se averigua de la propia lista: si el
+  //  que mira figura como dueño, puede. No hace falta preguntar aparte.
+  const yo = (await cliente.auth.getUser()).data.user;
+  const soyDuenio = lista.some(m => m.usuario_id === (yo && yo.id) &&
+                                    m.rol === "dueno");
+
+  lista.forEach(m => {
+    const f = _el("div", "renglon");
+    const izq = _el("div");
+    izq.appendChild(_el("b", null, m.correo));
+    izq.appendChild(_el("p", "sub", nombreRol(m.rol) +
+      (m.usuario_id === (yo && yo.id) ? " · sos vos" : "")));
+    f.appendChild(izq);
+
+    if (soyDuenio) {
+      const der = _el("div");
+      der.style.cssText = "display:flex;gap:6px;align-items:center";
+      const sel = document.createElement("select");
+      sel.setAttribute("aria-label", "rol de " + m.correo);
+      ROLES.forEach(([v, n]) => {
+        const o = document.createElement("option");
+        o.value = v; o.textContent = n;
+        sel.appendChild(o);
+      });
+      sel.value = m.rol;
+      sel.onchange = () => cambiarRol(eq, m, sel);
+      der.appendChild(sel);
+      const b = _boton("Sacar", () => sacarMiembro(eq, m), "chico");
+      b.style.marginRight = "0";
+      der.appendChild(b);
+      f.appendChild(der);
+    } else {
+      f.appendChild(_el("span", "pill", nombreRol(m.rol)));
+    }
+    caja.appendChild(f);
+  });
+
+  if (soyDuenio) {
+    const b = _boton("Invitar a alguien", () => invitar(eq), "pri");
+    b.style.marginTop = "10px";
+    caja.appendChild(b);
+  } else {
+    //  No se esconde el hecho de que existe: quien no puede tiene que
+    //  ver que la función está y a quién pedírsela.
+    caja.appendChild(_el("p", "sub",
+      "Sólo el dueño de la sala puede invitar gente o cambiar roles."));
+  }
+}
+
+async function invitar(eq) {
+  const correo = await preguntar({
+    titulo: "Invitar a la sala «" + eq.nombre + "»",
+    texto: "Si esa persona todavía no tiene cuenta, le creamos una y te " +
+           "damos una contraseña para pasarle. Después ella se la cambia.",
+    campo: "Correo de la persona",
+    aceptar: "Invitar",
+    validar: v => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)
+                  ? null : "Escribí un correo válido.",
+  });
+  if (!correo) return;
+
+  //  El rol se elige DESPUÉS del correo y en su propio paso: es la
+  //  decisión importante de las dos, y mezclarla con escribir un correo
+  //  hace que se acepte la que viene puesta sin mirarla.
+  const rol = await preguntar({
+    titulo: "¿Qué va a poder hacer?",
+    texto: ROLES.map(([, n, d]) => n + ": " + d).join("\n"),
+    campo: "Rol (dueno, operador o lectura)",
+    valor: "operador",
+    aceptar: "Invitar",
+    validar: v => ROLES.some(x => x[0] === v)
+                  ? null : "Poné dueno, operador o lectura.",
+  });
+  if (!rol) return;
+
+  const { data, error } = await cliente.rpc("invitar_miembro",
+    { p_equipo_id: eq.id, p_correo: correo, p_rol: rol });
+  if (error) {
+    await avisarModal("No se pudo invitar",
+                      _porQue(error, "No se pudo invitar."));
+    return;
+  }
+  const f = Array.isArray(data) ? data[0] : data;
+  await verGente(eq);           // se cierra
+  await verGente(eq);           // y se vuelve a abrir, ya con el nuevo
+
+  if (f && f.clave_temporal) mostrarClaveTemporal(eq, f);
+  else await avisarModal("Listo",
+      correo + " ya tenía cuenta, así que entra con su contraseña de " +
+      "siempre. Ya aparece en la lista de la sala.");
+}
+
+//  La contraseña temporal se muestra UNA vez, grande y con el paso a
+//  paso. No se guarda en ningún lado en claro, así que si esta pantalla
+//  se cierra sin copiarla hay que sacar a la persona y volver a
+//  invitarla.
+function mostrarClaveTemporal(eq, f) {
+  const caja = _$("gente-" + eq.id);
+  if (!caja) return;
+  const marco = _el("div");
+  marco.style.cssText = "margin-top:12px;padding:12px;border-radius:8px;" +
+    "background:rgba(127,127,127,.12)";
+  marco.appendChild(_el("p", "sub", "Cuenta creada para " + f.correo +
+    ". Pasale esta contraseña; es la única vez que se muestra."));
+  const c = _el("b", null, f.clave_temporal);
+  c.style.cssText = "font-size:24px;letter-spacing:2px;display:block;" +
+    "margin:8px 0;font-family:ui-monospace,monospace;word-break:break-all";
+  marco.appendChild(c);
+  marco.appendChild(_el("p", "sub", "Que entre con su correo y esta " +
+    "contraseña, y que la cambie desde «Mi cuenta». Si la perdés, sacá a " +
+    "la persona de la sala y volvé a invitarla."));
+  caja.appendChild(marco);
+}
+
+async function cambiarRol(eq, m, sel) {
+  const nuevo = sel.value;
+  if (nuevo === m.rol) return;
+  const ok = await preguntar({
+    titulo: "Cambiar el rol de " + m.correo,
+    texto: "Pasa de «" + nombreRol(m.rol) + "» a «" + nombreRol(nuevo) +
+           "». " + (ROLES.find(x => x[0] === nuevo) || [,, ""])[2] + ".",
+    aceptar: "Cambiar",
+  });
+  if (!ok) { sel.value = m.rol; return; }
+  const { error } = await cliente.rpc("cambiar_rol",
+    { p_equipo_id: eq.id, p_usuario_id: m.usuario_id, p_rol: nuevo });
+  if (error) {
+    sel.value = m.rol;
+    await avisarModal("No se pudo cambiar el rol",
+                      _porQue(error, "No se pudo cambiar el rol."));
+    return;
+  }
+  await verGente(eq); await verGente(eq);
+}
+
+async function sacarMiembro(eq, m) {
+  const ok = await preguntar({
+    titulo: "Sacar a " + m.correo,
+    texto: "Deja de ver esta sala y de poder operarla. Su cuenta no se " +
+           "borra: puede estar en otras salas.",
+    aceptar: "Sacar de la sala",
+    peligro: true,
+  });
+  if (!ok) return;
+  const { error } = await cliente.rpc("quitar_miembro",
+    { p_equipo_id: eq.id, p_usuario_id: m.usuario_id });
+  if (error) {
+    await avisarModal("No se pudo sacar", _porQue(error, "No se pudo sacar."));
+    return;
+  }
+  await verGente(eq); await verGente(eq);
 }
 
 //  Desde adentro de una sala siempre se puede volver a la lista. Sin
