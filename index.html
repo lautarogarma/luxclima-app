@@ -671,6 +671,15 @@ async function verGente(eq) {
       sel.value = m.rol;
       sel.onchange = () => cambiarRol(eq, m, sel);
       der.appendChild(sel);
+      //  Restablecer sólo aparece cuando el servidor dijo que se
+      //  puede. La condición es del servidor, no de la pantalla: acá
+      //  sólo se refleja, para no ofrecer un botón que va a ser
+      //  rechazado.
+      if (m.puede_restablecerse) {
+        const r = _boton("Contraseña", () => restablecerClave(eq, m), "chico");
+        r.title = "Generar una contraseña nueva para esta persona";
+        der.appendChild(r);
+      }
       const b = _boton("Sacar", () => sacarMiembro(eq, m), "chico");
       b.style.marginRight = "0";
       der.appendChild(b);
@@ -777,6 +786,30 @@ async function cambiarRol(eq, m, sel) {
     return;
   }
   await verGente(eq); await verGente(eq);
+}
+
+//  Para el operador que se olvidó la contraseña. Es el único agujero
+//  que dejaba el alta sin correo: sin esto, quien la perdía no tenía
+//  cómo volver a entrar.
+async function restablecerClave(eq, m) {
+  const ok = await preguntar({
+    titulo: "Nueva contraseña para " + m.correo,
+    texto: "Se genera una contraseña nueva y la anterior deja de servir " +
+           "en el acto. Si esa persona está con la sesión abierta en " +
+           "algún lado, se le cierra. Vas a tener que pasarle la nueva.",
+    aceptar: "Generar",
+  });
+  if (!ok) return;
+  const { data, error } = await cliente.rpc("restablecer_clave_miembro",
+    { p_equipo_id: eq.id, p_usuario_id: m.usuario_id });
+  if (error) {
+    await avisarModal("No se pudo restablecer",
+                      _porQue(error, "No se pudo restablecer."));
+    return;
+  }
+  const f = Array.isArray(data) ? data[0] : data;
+  await verGente(eq); await verGente(eq);
+  if (f && f.clave_temporal) mostrarClaveTemporal(eq, f);
 }
 
 async function sacarMiembro(eq, m) {
