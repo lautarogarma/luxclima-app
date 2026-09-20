@@ -198,8 +198,11 @@ function aviso(t, clase) {
 //  los originó — con el nombre de la sala recortado, justo cuando hay
 //  que escribirlo para confirmar un borrado.
 //
-//  Devuelve una promesa: `null` si se cancela; el texto escrito si pide
-//  campo, o `true` si es sólo confirmar.
+//  Devuelve una promesa: `null` si se cancela; el texto escrito o el
+//  valor elegido si pide campo u opciones, o `true` si es sólo
+//  confirmar. `o.opciones` es una lista de `[valor, nombre]`: se
+//  muestra el nombre y se devuelve el valor, para no obligar a nadie a
+//  teclear un identificador interno.
 function dialogo(o) {
   return new Promise(resolve => {
     const fondo = document.createElement("div");
@@ -221,7 +224,26 @@ function dialogo(o) {
     }
 
     let campo = null;
-    if (o.campo !== undefined) {
+    if (o.opciones) {
+      //  Una lista, no un campo de texto: si las opciones son fijas
+      //  -un rol, un modo- pedir que se las TECLEE hace que la persona
+      //  tenga que recordar un identificador interno en vez de leer un
+      //  nombre. «Dueño» con eñe se escribe fácil; `dueno` sin tilde
+      //  hay que acordárselo.
+      const lab = document.createElement("label");
+      lab.className = "sub";
+      lab.textContent = o.campo;
+      lab.setAttribute("for", "modal-campo");
+      campo = document.createElement("select");
+      campo.id = "modal-campo";
+      o.opciones.forEach(([valor, nombre]) => {
+        const op = document.createElement("option");
+        op.value = valor; op.textContent = nombre;
+        campo.appendChild(op);
+      });
+      campo.value = o.valor || o.opciones[0][0];
+      caja.append(lab, campo);
+    } else if (o.campo !== undefined) {
       const lab = document.createElement("label");
       lab.className = "sub";
       lab.textContent = o.campo;

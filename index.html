@@ -278,6 +278,15 @@ const cliente = supabase.createClient(CFG.url, CFG.anon);
 LuxApp.init(cliente);
 
 let equipoAbierto = false;
+//  Con una sola sala se entra derecho al arrancar: es el caso de todos
+//  los días. Pero si la persona vuelve al índice A PROPÓSITO -tocando
+//  «Todas las salas»- esa comodidad se convierte en un candado: el
+//  botón la saca de la sala, `cargarEquipos()` corre nomás vuelve a
+//  ver una sola sala vinculada, y la reabría en el acto. Para quien
+//  toca el botón, no pasaba nada: la lista aparecía y se cerraba sola.
+//  Esta bandera, una vez en verdadero, apaga esa comodidad por el
+//  resto de la sesión.
+let volvioASalas = false;
 
 // ── Ingreso ────────────────────────────────────────────────────
 function msg(t, clase) {
@@ -602,7 +611,12 @@ async function cargarEquipos() {
   //  todos los días. Si no tiene controlador no se entra, porque adentro
   //  no habría nada que mirar y el que la acaba de crear necesita ver
   //  justamente el botón de vincular.
-  if (data.length === 1 && data[0].serie && !equipoAbierto) {
+  //
+  //  Y sólo si nadie pidió ver el índice a propósito. Sin `!volvioASalas`
+  //  acá, tocar «Todas las salas» con una única sala vinculada abría y
+  //  cerraba la lista sola: el botón volvía a traer exactamente la
+  //  condición que acababa de cumplirse.
+  if (data.length === 1 && data[0].serie && !equipoAbierto && !volvioASalas) {
     equipoAbierto = true;
     LuxApp.abrirSala(data[0]);
   }
@@ -717,14 +731,16 @@ async function invitar(eq) {
   //  El rol se elige DESPUÉS del correo y en su propio paso: es la
   //  decisión importante de las dos, y mezclarla con escribir un correo
   //  hace que se acepte la que viene puesta sin mirarla.
+  //
+  //  Se elige de una lista, no se teclea. Pedirle a alguien que escriba
+  //  `dueno` sin eñe para dar de alta a un «Dueño» es forzarlo a conocer
+  //  un identificador interno que la propia app ya conoce.
   const rol = await preguntar({
     titulo: "¿Qué va a poder hacer?",
-    texto: ROLES.map(([, n, d]) => n + ": " + d).join("\n"),
-    campo: "Rol (dueno, operador o lectura)",
+    campo: "Rol",
+    opciones: ROLES.map(([v, n, d]) => [v, n + " — " + d]),
     valor: "operador",
     aceptar: "Invitar",
-    validar: v => ROLES.some(x => x[0] === v)
-                  ? null : "Poné dueno, operador o lectura.",
   });
   if (!rol) return;
 
@@ -835,6 +851,7 @@ async function sacarMiembro(eq, m) {
 //  nunca a renombrarla ni a crear la segunda.
 _$("btn-salas").onclick = () => {
   equipoAbierto = false;
+  volvioASalas = true;
   LuxApp.cerrarSala();
   cargarEquipos();
 };
