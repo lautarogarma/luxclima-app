@@ -205,6 +205,12 @@ function aviso(t, clase) {
 //  teclear un identificador interno.
 function dialogo(o) {
   return new Promise(resolve => {
+    //  Quién tenía el foco antes de abrir. Se lo devuelve al cerrar: sin
+    //  esto, cancelar con Escape o con el botón deja el punto de trabajo
+    //  del teclado sin dueño, porque el control que abrió el diálogo ya
+    //  no está ahí y nada lo reemplaza.
+    const origen = document.activeElement;
+
     const fondo = document.createElement("div");
     fondo.className = "modal-fondo";
     const caja = document.createElement("div");
@@ -274,14 +280,39 @@ function dialogo(o) {
     fila.appendChild(aceptar);
     caja.appendChild(fila);
 
+    //  El orden real de Tab dentro del diálogo. Se arma con las
+    //  referencias que ya se tienen -no con `querySelectorAll`- porque
+    //  son justo los tres controles que se crearon arriba, en el orden
+    //  en que quedaron en la página.
+    const focoOrden = [];
+    if (!o.soloAceptar) focoOrden.push(cancelar);
+    if (campo) focoOrden.push(campo);
+    focoOrden.push(aceptar);
+
     const cerrar = r => {
       document.removeEventListener("keydown", tecla);
       if (fondo.remove) fondo.remove();
+      //  Se devuelve el foco a quien abrió el diálogo.
+      if (origen && typeof origen.focus === "function") origen.focus();
       resolve(r);
     };
     const tecla = e => {
-      if (e.key === "Escape") cerrar(null);
-      if (e.key === "Enter" && campo) aceptar.onclick();
+      if (e.key === "Escape") { cerrar(null); return; }
+      if (e.key === "Enter" && campo) { aceptar.onclick(); return; }
+      //  Tab atrapado DENTRO del diálogo. Sin esto, tabular desde el
+      //  último botón sigue de largo hacia la página de fondo: se ve
+      //  bloqueada por el overlay pero el foco de teclado igual la
+      //  alcanza, y de ahí no hay vuelta al diálogo sin usar el mouse.
+      if (e.key === "Tab" && focoOrden.length) {
+        const i = focoOrden.indexOf(document.activeElement);
+        const ultimo = focoOrden.length - 1;
+        if (e.shiftKey) {
+          if (i <= 0) { e.preventDefault(); focoOrden[ultimo].focus(); }
+        } else if (i < 0 || i === ultimo) {
+          e.preventDefault();
+          focoOrden[0].focus();
+        }
+      }
     };
     cancelar.onclick = () => cerrar(null);
     aceptar.onclick = () => {
