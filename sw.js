@@ -12,7 +12,7 @@
 //  Se cachea el CASCARON -la pagina, los estilos, el guion- que no dice
 //  nada sobre la sala. Los datos se piden siempre a la red, y si no hay
 //  red la interfaz lo dice con el velo.
-const CACHE = "clima-v12";   // v12: el ingreso pasa a Auth0 (vendor/auth0.js)
+const CACHE = "clima-v13";   // v13: las órdenes salen por pedir_comando (C-21, 2026-10-12)
 
 //  El cascaron COMPLETO. Antes faltaban `app.js` y `parametros.js`, y
 //  sin ellos abrir sin conexion daba una pagina en blanco: cargaba el

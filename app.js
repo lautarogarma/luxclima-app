@@ -37,7 +37,10 @@ const ver = (el, s) => el && el.classList.toggle("oculto", !s);
 
 const CMD = { ACK_SEGURIDAD: 1, ALARMA_ACK: 2, ALARMA_SILENCIAR: 3,
              MANUAL_ON: 4, MANUAL_OFF: 5, PARAMETRO: 9, ASIGNAR_SALIDA: 10,
-             SATURAR_SUSTRATO: 12, RESET_CONSUMO_CO2: 13 };
+             SATURAR_SUSTRATO: 12, RESET_CONSUMO_CO2: 13,
+             //  C-19 (mapa 26): MANUAL_ON con la confirmación de que se
+             //  prende una luz fuera de la fase de luz.
+             MANUAL_ON_NOCHE: 16 };
 //  El canal va en el byte alto y el estado en el bajo, como todo
 //  parámetro que habla de un canal.
 
@@ -101,6 +104,10 @@ function fmtValor(v, p) {
   //  dice si está activo -así lo guarda el controlador-; sin él, el pulso
   //  está apagado aunque tenga una hora vieja guardada.
   if (f === 10) return (v & 0x8000) ? fmtValor(v & 0x7FFF, { f: 2 }) : "apagado";
+  //  11 (mapa 26): un borde con signo respecto de la luz principal. El
+  //  cero no es «0 min», es «acompaña a la luz»; el signo, con palabras.
+  if (f === 11) return v === 0 ? "con la luz"
+                               : (v < 0 ? (-v) + " min antes" : v + " min después");
   return String(v);
 }
 
@@ -117,10 +124,24 @@ function leerValor(texto, p) {
   if (!t) return { error: "Escribí un valor." };
   //  «sin límite» / «sin techo» / «apagada» se escriben como cero, que es
   //  lo que significan para el equipo.
-  if (/^sin\s|^apagad/.test(t)) {
+  if (/^sin\s|^apagad/.test(t) || (f === 11 && /^con/.test(t))) {
     if ((f >= 3 && f <= 5) || f === 7) return { v: 0 };
-    if (f === 6 || f === 8 || f === 9 || f === 10) return { v: 0 };
+    if (f === 6 || f === 8 || f === 9 || f === 10 || f === 11) return { v: 0 };
     return { error: "Este valor no admite «" + texto.trim() + "»." };
+  }
+  //  11: también se escribe con palabras («30 antes», «120 después»).
+  if (f === 11) {
+    const m = t.match(/^(-?\d+)\s*(?:min\.?\s*)?(antes|despu[eé]s)?$/);
+    if (!m) return { error: "Escribí los minutos, como «30 antes» o «120 después»." };
+    let n = +m[1];
+    if (m[2] === "antes") n = -Math.abs(n);
+    const paso11 = p.paso || 1;
+    n = Math.round(n / paso11) * paso11;
+    if (n < p.min || n > p.max) {
+      return { error: "Tiene que estar entre " + fmtValor(p.min, p) + " y " +
+                       fmtValor(p.max, p) + "." };
+    }
+    return { v: n };
   }
   let crudo;
   if (f === 2 || f === 10) {
@@ -210,10 +231,15 @@ function siguiente(v, p, subir) {
 // ------------------------------------------------------------
 //  Mandar una orden
 // ------------------------------------------------------------
-//  Se inserta en `comandos` y el equipo la busca. No se dispara nada
+//  Queda en la cola `comandos` y el equipo la busca. No se dispara nada
 //  hacia el equipo: no acepta conexiones entrantes, y no debe. Un
 //  puerto abierto hacia un controlador que maneja una válvula de gas lo
 //  encuentran los buscadores de dispositivos expuestos en horas.
+//
+//  Se pide por `pedir_comando` y no con un INSERT (C-21, 2026-10-12; R2-001
+//  y R2-002 de Codex): el servidor decide si este rol puede dar ESTA
+//  orden, y pone él quién la pidió y cuándo vence. Si no puede, la causa
+//  viene en castellano en el error y se muestra tal cual.
 async function mandar(codigo, arg1, arg2, claveVuelo, queDice) {
   if (!equipoActual) return;
 
@@ -235,17 +261,20 @@ async function mandar(codigo, arg1, arg2, claveVuelo, queDice) {
     enVuelo.set(claveVuelo, { desde: Date.now(), dice: queDice || "" });
   pintarTodo();
 
-  const { data, error } = await sb.from("comandos").insert({
-    equipo_id: equipoActual.id, codigo, arg1: arg1 | 0, arg2: arg2 | 0,
-  }).select("id").maybeSingle();
+  const { data, error } = await sb.rpc("pedir_comando", {
+    p_equipo_id: equipoActual.id, p_codigo: codigo,
+    p_arg1: arg1 | 0, p_arg2: arg2 | 0,
+  });
 
-  if (error) {
+  if (error || !data) {
     if (claveVuelo !== undefined) enVuelo.delete(claveVuelo);
-    aviso("No se pudo enviar: " + enCastellano(error.message), "err");
+    aviso("No se pudo enviar: " +
+          enCastellano(error ? error.message : "el servidor no devolvió la orden"),
+          "err");
     pintarTodo();
     return;
   }
-  vigilar(data.id, claveVuelo);
+  vigilar(data, claveVuelo);
 }
 
 //  Qué se pidió, para decirlo en el resultado. «Hecho.» a secas no dice
@@ -1447,10 +1476,16 @@ function numeroLegible(v, p) {
 function ayudaRango(p) {
   if ((p.f || 0) === 2) return "Como 08:30.";
   if (p.f === 10) return "Como 08:30. «apagado» apaga este pulso.";
+  //  11: minutos respecto de la luz principal, con palabras.
+  if (p.f === 11) return "Como «30 antes» o «120 después». " +
+                         "«con la luz» lo deja junto a la luz principal.";
   const desde = p.piso || p.min;
   return "Entre " + numeroLegible(desde, p) + " y " + numeroLegible(p.max, p) +
          ", de a " + numeroLegible(p.paso || 1, p) + "." +
          ((p.f === 8 || p.f === 9) ? " 0 es «apagado»." :
+          //  El techo de higiene dice «sin techo» en su valor (fmtValor):
+          //  la ayuda no puede llamarlo de otra forma (revisor, 2026-10-12).
+          p.f === 7 ? " 0 es «sin techo»." :
           p.piso ? " 0 es «sin límite»." : "");
 }
 
@@ -1561,31 +1596,19 @@ function pintarEquiposPanel() {
       sel.appendChild(op);
     });
     sel.value = o.tipo || 0;
-    sel.disabled = trabado || !puedeInstalar();
-    //  Cambiar qué equipo maneja un relé NO es un ajuste de operación:
-    //  es tocar la instalación. Un toque accidental en una pantalla que
-    //  se abrió para mirar horas de uso puede dejar la extracción
-    //  conectada al humidificador, y eso no se nota hasta que hace
-    //  falta extraer. Por eso se pregunta, y la pregunta dice el antes
-    //  y el después con las palabras del operador.
-    sel.onchange = async () => {
-      const nuevo = +sel.value;
-      const antes = EQUIPOS[o.tipo || 0], despues = EQUIPOS[nuevo];
-      const ok = await dialogo({
-        titulo: "Cambiar qué maneja el relé " + o.ch,
-        texto: "Ahora maneja «" + antes + "» y pasaría a manejar «" +
-               despues + "». Esto cambia la instalación, no un ajuste " +
-               "del día: si el cableado no acompaña, el equipo va a " +
-               "accionar el aparato equivocado.",
-        aceptar: "Cambiar",
-        peligro: true,
-      });
-      //  Se vuelve a lo que hay DE VERDAD, no a lo elegido: el
-      //  desplegable no puede quedar mostrando algo que nadie confirmó.
-      if (!ok) { sel.value = o.tipo || 0; return; }
-      mandar(CMD.ASIGNAR_SALIDA, o.ch, nuevo, "rele" + o.ch,
-             "relé " + o.ch + " → " + despues);
-    };
+    //  R2-001 (reauditoría de Codex, 2026-10-12): cambiar qué equipo
+    //  maneja un relé es tocar la INSTALACIÓN, y el equipo ya no lo
+    //  acepta por la vía remota — con razón: desasignar la válvula de
+    //  CO₂ desde cualquier lado le quitaba su protección de crítica, y
+    //  el relé físico de la solenoide quedaba accionable a mano. Se
+    //  cambia parado frente al tablero: la pantalla, o la página local
+    //  del equipo. El desplegable queda para VER qué hay, deshabilitado
+    //  y diciendo por qué — un control que siempre rebota enseña a
+    //  ignorar los rechazos.
+    sel.disabled = true;
+    sel.title = "Se cambia en la sala: pantalla del tablero o página del equipo.";
+    sel.setAttribute("aria-label", "relé " + o.ch +
+        ": qué equipo maneja. Se cambia en la sala, no desde la app");
     const est = document.createElement("span");
     //  Fuera de servicio gana a todo: si alguien ya anotó que ese relé
     //  no anda, «apagado» no es la noticia, y un «no cumple» sería
@@ -1636,13 +1659,34 @@ function pintarEquiposPanel() {
       m.disabled = trabado;
       m.setAttribute("aria-label", (manual ? "apagar el relé "
                                            : "encender 10 minutos el relé ") + o.ch);
-      m.onclick = () => {
+      m.onclick = async () => {
         //  El 1 s del OFF: apagar YA y que en un segundo vuelva a mandar
         //  la lógica de siempre, en vez del apagado retenido una hora.
-        if (manual) mandar(CMD.MANUAL_OFF, o.ch, 1, "manual" + o.ch,
-                           "relé " + o.ch + " → apagar");
-        else        mandar(CMD.MANUAL_ON, o.ch, 600, "manual" + o.ch,
-                           "relé " + o.ch + " → encendido 10 min");
+        if (manual) { mandar(CMD.MANUAL_OFF, o.ch, 1, "manual" + o.ch,
+                             "relé " + o.ch + " → apagar"); return; }
+        //  C-19 (decisión del propietario, 2026-10-12): prender una LUZ
+        //  fuera de la fase de luz se puede, pero con esta pregunta. El
+        //  equipo igual la exige (MANUAL_ON común contesta «hay que
+        //  confirmar»): esto no es la seguridad, es la cortesía de
+        //  preguntar ANTES de mandar.
+        const esLuz = o.tipo === 9 || o.tipo === 11 || o.tipo === 12 || o.tipo === 13;
+        const luz = ultimoEstado && ultimoEstado.d && ultimoEstado.d.luz;
+        if (esLuz && luz && luz.fase_de_luz === false) {
+          const ok = await dialogo({
+            titulo: "Prender la luz en horario nocturno",
+            texto: "Está intentando prender las luces de forma manual en " +
+                   "horario nocturno. En floración, cortar la noche de las " +
+                   "plantas puede afectar el cultivo. ¿Está seguro?",
+            aceptar: "Prender igual",
+            peligro: true,
+          });
+          if (!ok) return;
+          mandar(CMD.MANUAL_ON_NOCHE, o.ch, 600, "manual" + o.ch,
+                 "relé " + o.ch + " → encendido 10 min (de noche, confirmado)");
+          return;
+        }
+        mandar(CMD.MANUAL_ON, o.ch, 600, "manual" + o.ch,
+               "relé " + o.ch + " → encendido 10 min");
       };
       row.appendChild(m);
     }

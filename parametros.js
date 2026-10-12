@@ -19,7 +19,7 @@ window.PARAMETROS = {
   5: {t:"Demora tras encender la luz (min)", k:"num", s:"CO2", paso:15, min:0, max:240, f:0},
   6: {t:"Cortar antes de apagar la luz (min)", k:"num", s:"CO2", paso:5, min:0, max:120, f:0},
   7: {t:"Cuándo inyectar", k:"lista", s:"CO2", op:["Siempre, aun de noche","Solo con luz encendida","Fotoperíodo"]},
-  8: {t:"Techo de higiene (ppm)", k:"num", s:"CO2", paso:100, min:0, max:2500, f:7},
+  8: {t:"Techo de higiene (ppm)", k:"num", s:"CO2", paso:100, min:0, max:2500, f:7, piso:600},
   9: {t:"Temp máxima de día (°C)", k:"num", s:"Temperatura y humedad de sala", paso:5, min:100, max:500, f:1},
   10: {t:"Temp máxima de noche (°C)", k:"num", s:"Temperatura y humedad de sala", paso:5, min:100, max:500, f:1},
   11: {t:"Hum máxima de día (%)", k:"num", s:"Temperatura y humedad de sala", paso:10, min:200, max:1000, f:1},
@@ -127,6 +127,10 @@ window.PARAMETROS = {
   123: {t:"Sustrato: cuánto tiene que subir tras regar (%)", k:"num", s:"Riego y sustrato", paso:5, min:5, max:200, f:1, inst:1},
   124: {t:"Extracción cíclica: marcha (s)", k:"num", s:"Temperatura y humedad de sala", paso:30, min:30, max:3600, f:0},
   125: {t:"Extracción cíclica: pausa (s)", k:"num", s:"Temperatura y humedad de sala", paso:60, min:60, max:14400, f:0},
+  126: {t:"Luz roja: corre su encendido (min, − antes)", k:"num", s:"Fotoperiodo", paso:5, min:-120, max:720, f:11},
+  127: {t:"Luz roja: corre su apagado (min, − antes)", k:"num", s:"Fotoperiodo", paso:5, min:-720, max:120, f:11},
+  128: {t:"Luz UV: corre su encendido (min, − antes)", k:"num", s:"Fotoperiodo", paso:5, min:-120, max:720, f:11},
+  129: {t:"Luz UV: corre su apagado (min, − antes)", k:"num", s:"Fotoperiodo", paso:5, min:-720, max:120, f:11},
 };
 
 window.PAR = {
@@ -225,4 +229,8 @@ window.PAR = {
   SUELO_SUBIDA_P10: 123,
   VENT_EXT_MARCHA_S: 124,
   VENT_EXT_PAUSA_S: 125,
+  ROJO_INICIO: 126,
+  ROJO_FIN: 127,
+  UV_INICIO: 128,
+  UV_FIN: 129,
 };
