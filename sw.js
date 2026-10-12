@@ -12,13 +12,17 @@
 //  Se cachea el CASCARON -la pagina, los estilos, el guion- que no dice
 //  nada sobre la sala. Los datos se piden siempre a la red, y si no hay
 //  red la interfaz lo dice con el velo.
-const CACHE = "clima-v10";
+const CACHE = "clima-v12";   // v12: el ingreso pasa a Auth0 (vendor/auth0.js)
 
 //  El cascaron COMPLETO. Antes faltaban `app.js` y `parametros.js`, y
 //  sin ellos abrir sin conexion daba una pagina en blanco: cargaba el
-//  index y se quedaba sin el codigo que lo llena.
+//  index y se quedaba sin el codigo que lo llena. Y faltaba supabase-js,
+//  que venia de un CDN y este archivo ignoraba por ajeno: sin red, la
+//  app quedaba en «Conectando…» muda (CL-014, 2026-10-10). Ahora es
+//  propio (vendor/, con su procedencia en vendor/LEEME.md).
 const CASCARON = ["./index.html", "./config.js", "./app.js",
-                  "./parametros.js", "./manifest.webmanifest"];
+                  "./parametros.js", "./manifest.webmanifest",
+                  "./vendor/supabase.js", "./vendor/auth0.js"];
 
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(CASCARON))
@@ -58,8 +62,13 @@ self.addEventListener("fetch", e => {
   //  portada.
   e.respondWith(
     fetch(e.request).then(res => {
-      const copia = res.clone();
-      caches.open(CACHE).then(c => c.put(e.request, copia)).catch(() => {});
+      //  Sólo se guarda lo que salió BIEN: guardar un 404 o un 500 dejaba
+      //  ese error como «última versión» para abrir sin red (auditoría
+      //  integral 2026-10-10).
+      if (res.ok) {
+        const copia = res.clone();
+        caches.open(CACHE).then(c => c.put(e.request, copia)).catch(() => {});
+      }
       return res;
     }).catch(() => caches.match(e.request)
                          .then(hit => hit || caches.match("./index.html")))

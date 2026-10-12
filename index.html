@@ -13,14 +13,25 @@
 <style>
 :root{
   --fondo:#0C110E; --tarjeta:#151E18; --borde:#6e7681; --linea:#263329;
-  --texto:#E4EBE5; --tenue:#8A9B8F;
-  --ok:#5BC46B; --atencion:#D9A227; --peligro:#CC4437; --marca:#76A868;
+  /* --tenue y --peligro-texto: los mismos que la pantalla desde el
+     2026-10-10 (auditoría integral). El tenue viejo medía 5,8:1 y en un
+     teléfono al sol se lavaba; --peligro es un FONDO (el banner, con
+     blanco encima): como texto medía 3,6:1, debajo de la WCAG, justo en
+     «no se aplicó» y en las alarmas graves. tools/contraste.py los mide. */
+  --texto:#E4EBE5; --tenue:#9DB0A3;
+  --ok:#5BC46B; --atencion:#D9A227; --peligro:#CC4437; --peligro-texto:#E06A5C;
+  --marca:#76A868;
   --accion:#58a6ff; --sobreClaro:#08130B;
+  --navinf-alto:64px;
 }
 *{box-sizing:border-box}
 body{margin:0;background:var(--fondo);color:var(--texto);
      font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
      padding:14px;padding-bottom:calc(28px + env(safe-area-inset-bottom,0px))}
+/* Con la barra inferior fija presente, el contenido no puede terminar
+   debajo de ella: se agrega el alto de la barra más su propio margen
+   de seguridad al padding inferior del body. */
+body.con-navinf{padding-bottom:calc(var(--navinf-alto) + 20px + env(safe-area-inset-bottom,0px))}
 h1{font-size:20px;margin:0 0 2px}
 h2{font-size:15px;color:var(--tenue);margin:0 0 10px;font-weight:600}
 .sub{color:var(--tenue);font-size:14px;margin:0 0 14px}
@@ -47,28 +58,30 @@ label{display:block;font-size:14px;color:var(--tenue);margin:12px 0 6px}
 .pill{display:inline-block;font-size:13px;padding:3px 10px;border-radius:999px;
       border:1px solid var(--borde);color:var(--tenue);white-space:nowrap}
 .pill.on{background:#17301c;border-color:var(--ok);color:var(--ok)}
-.pill.mal{background:#2c1512;border-color:var(--peligro);color:var(--peligro)}
+.pill.mal{background:#2c1512;border-color:var(--peligro);color:var(--peligro-texto)}
 .pill.warn-pill{background:#2e2410;border-color:var(--atencion);color:var(--atencion)}
 /* El boton de fuera de servicio. 44 px de alto porque se toca justo
    cuando alguien esta arreglando algo, a veces con guantes. */
 button.chico{width:auto;min-width:78px;min-height:44px;padding:8px 12px;font-size:14px}
 button.chico.marcado{background:var(--atencion);color:var(--sobreClaro);
                      border-color:var(--atencion);font-weight:600}
-.err{color:var(--peligro)} .warn{color:var(--atencion)} .ok{color:var(--ok)}
+.err{color:var(--peligro-texto)} .warn{color:var(--atencion)} .ok{color:var(--ok)}
 .viejo{opacity:.35}
 .oculto{display:none!important}
 
-/* El banner de emergencia: fuera de cualquier pestaña, siempre visible */
+/* El banner de emergencia: fuera de cualquier sección, siempre visible */
 #banner{background:var(--peligro);border-radius:12px;padding:12px 14px;
         margin-bottom:12px}
 #banner b{display:block;font-size:17px;color:#fff}
 #banner span{font-size:15px;color:#fff}
 
-#pestanas{display:flex;gap:6px;margin-bottom:12px;overflow-x:auto}
-#pestanas button{width:auto;flex:1 0 auto;padding:10px 14px;min-height:44px;
-                 font-size:14px}
-#pestanas button[aria-pressed="true"]{background:var(--ok);
-  color:var(--sobreClaro);border-color:var(--ok);font-weight:600}
+/* ---- Encabezado compacto de la sala ---- */
+#encabezado-sala{display:flex;align-items:center;gap:10px;margin-bottom:12px;
+                 padding:2px 0}
+#btn-volver-salas{width:auto;min-height:40px;padding:6px 12px;font-size:14px;
+                  background:none;border:1px solid var(--linea);flex:0 0 auto}
+#encabezado-sala b{flex:1;font-size:17px;overflow:hidden;text-overflow:ellipsis;
+                   white-space:nowrap}
 
 .renglon{display:grid;grid-template-columns:1fr auto;gap:6px 10px;
          align-items:center;padding:9px 0;border-bottom:1px solid var(--linea)}
@@ -142,6 +155,82 @@ button.peligro{background:var(--peligro);color:#fff;border-color:var(--peligro);
 .leyenda{display:flex;flex-wrap:wrap;gap:14px;margin-top:10px;font-size:13px}
 .leyenda b{font-weight:600}
 .aviso-linea{min-height:22px;font-size:14px;margin:0 0 10px}
+/* El resultado de una orden queda PEGADO arriba al desplazarse. Vivía
+   al principio de la página: quien ajustaba algo en la parte de abajo
+   de Control no veía el «rechazado» ni su motivo, que se borraba a los
+   ocho segundos sin que nadie lo leyera. Auditoría de interfaz,
+   2026-09-25. */
+#aviso{position:sticky;top:0;z-index:30;background:var(--fondo)}
+#aviso:not(:empty){padding:10px 12px;border-radius:10px;
+  background:var(--tarjeta);border:1px solid var(--borde)}
+/* El valor de una fila se toca para escribirlo. Se ve como un campo
+   (subrayado), no como un botón más, para que no compita con − y +. */
+button.valor-tocable{width:auto;min-height:44px;padding:4px 8px;background:none;
+  border:none;border-bottom:1px dashed var(--borde);border-radius:0;
+  color:var(--texto)}
+/* Deshabilitado por rol se lee normal; el ámbar es sólo «esperando», y
+   lo pone `.fila.esperando .fila-v`, que pesa más que esta regla. */
+button.valor-tocable:disabled{background:none;color:var(--texto);
+  border-bottom-color:transparent;cursor:default}
+.renglon .pill{justify-self:end}
+
+/* ---- Barra de navegación inferior ----
+   Reemplaza la banda horizontal de pestañas de arriba: compite menos
+   con el encabezado y el banner de emergencia, y es el patrón esperado
+   en el teléfono para 3-5 destinos principales (Android Nav bar / iOS
+   Tab bar). Fija abajo, siempre visible mientras se está dentro de una
+   sala — nunca con scroll horizontal ni oculta. */
+#navinf{position:fixed;left:0;right:0;bottom:0;z-index:40;
+        background:var(--tarjeta);border-top:1px solid var(--linea);
+        display:flex;padding:6px 6px calc(6px + env(safe-area-inset-bottom,0px))}
+#navinf button{flex:1;width:auto;min-height:52px;border:none;background:none;
+               border-radius:10px;display:flex;flex-direction:column;
+               align-items:center;justify-content:center;gap:2px;
+               font-size:12px;color:var(--tenue);padding:6px 2px}
+#navinf button .ico{font-size:20px;line-height:1}
+/* El estado seleccionado necesita texto, icono Y color/borde: no
+   depender sólo del color, que WCAG desaconseja como único indicador. */
+#navinf button[aria-pressed="true"]{color:var(--ok);font-weight:600;
+  background:#17301c}
+#navinf button[aria-pressed="true"] .ico{filter:drop-shadow(0 0 1px var(--ok))}
+
+/* ---- Control: tarjetas resumen por subsistema ---- */
+.tarjeta-control{display:flex;justify-content:space-between;align-items:center;
+                 gap:10px;width:100%;text-align:left;background:var(--tarjeta);
+                 border:1px solid var(--linea);border-radius:12px;
+                 padding:14px;margin-bottom:10px;min-height:64px}
+.tarjeta-control:hover{border-color:var(--borde)}
+.tarjeta-control[aria-expanded="true"]{border-color:var(--marca)}
+.tarjeta-control .tc-nombre{font-size:16px;font-weight:600;display:block}
+.tarjeta-control .tc-resumen{font-size:14px;color:var(--tenue);display:block;margin-top:2px}
+.tarjeta-control .tc-flecha{font-size:14px;color:var(--tenue);flex:0 0 auto}
+.detalle-control{margin:-4px 0 14px;padding:0 2px}
+
+/* ---- Historial: selector de variable ---- */
+/* En dos renglones si no entran: con desplazamiento horizontal,
+   «Sustrato» y «Comparar variables» quedaban fuera de la vista sin
+   ninguna pista de que existían (auditoría de interfaz, 2026-09-25). */
+#hist-vars{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+#hist-vars button{width:auto;flex:0 0 auto;padding:8px 14px;min-height:40px;font-size:14px}
+#hist-vars button[aria-pressed="true"]{background:var(--ok);color:var(--sobreClaro);
+  border-color:var(--ok);font-weight:600}
+
+/* ---- Más: lista de filas grandes ---- */
+.fila-mas{display:flex;width:100%;justify-content:space-between;align-items:center;
+          gap:10px;background:var(--tarjeta);border:1px solid var(--linea);
+          border-radius:12px;padding:16px;margin-bottom:10px;text-align:left;
+          min-height:56px}
+.fila-mas .fm-nombre{font-size:16px;font-weight:600;display:block}
+.fila-mas .fm-sub{font-size:13px;color:var(--tenue);display:block;margin-top:2px}
+
+/* ---- Puesta en marcha guiada ---- */
+#puesta-marcha ol{list-style:none;margin:0;padding:0}
+#puesta-marcha li{display:flex;justify-content:space-between;align-items:center;
+                  gap:10px;padding:10px 0;border-bottom:1px solid var(--linea)}
+#puesta-marcha li:last-child{border-bottom:none}
+#puesta-marcha .pm-txt{display:flex;align-items:center;gap:8px;font-size:15px}
+#puesta-marcha .pm-check{color:var(--ok);font-weight:700}
+#puesta-marcha button{width:auto;padding:8px 14px;min-height:40px;font-size:14px}
 </style>
 </head>
 <body>
@@ -151,29 +240,25 @@ button.peligro{background:var(--peligro);color:#fff;border-color:var(--peligro);
 
 <!-- ── Falta configurar ─────────────────────────────────────── -->
 <section id="sinconfig" class="card oculto" role="alert">
-  <p><b>Falta la clave <code>anon</code>.</b></p>
-  <p class="sub">Se pega en <code>config.js</code>. Sale de
-     <i>Project Settings → API → anon public</i>: un texto largo que
-     empieza con <code>eyJ</code>.</p>
+  <p><b>Falta configurar <code>config.js</code>.</b></p>
+  <p class="sub">Hacen falta la clave <code>anon</code> del proyecto de
+     Supabase (<i>Project Settings → API → anon public</i>) y los tres
+     datos del ingreso (<code>auth0</code>: domain, clientId y
+     audience). Con cualquiera vacío la aplicación no arranca a
+     propósito: publicarla a medias deja a todo el mundo afuera.</p>
 </section>
 
 <!-- ── Ingreso ──────────────────────────────────────────────── -->
+<!-- El formulario propio (correo, contraseña, crear cuenta, olvidé) se
+     fue a la página alojada de Auth0, la misma de la app de LuxHort
+     (pedido del propietario, 2026-10-11): Google con un clic,
+     confirmación del correo y recuperación de clave ya hechos y en
+     español, en vez de mantener cuatro flujos propios a medias. -->
 <section id="ingreso" class="card oculto">
   <h2>Entrar</h2>
-  <button id="btn-google" class="oculto">Continuar con Google</button>
-  <p id="o-con-correo" class="sub oculto"
-     style="text-align:center;margin:12px 0">o con tu correo</p>
-  <label for="correo">Correo</label>
-  <input id="correo" type="email" autocomplete="email" inputmode="email">
-  <label for="clave">Contraseña</label>
-  <input id="clave" type="password" autocomplete="current-password">
-  <div style="display:flex;gap:8px;margin-top:14px">
-    <button id="btn-entrar" class="pri">Entrar</button>
-    <button id="btn-crear">Crear cuenta</button>
-  </div>
-  <button id="btn-olvide" style="margin-top:8px;border:none;background:none;color:var(--accion)">
-    Olvidé mi contraseña
-  </button>
+  <p class="sub">Con tu cuenta de Google, o con correo y contraseña.
+     El ingreso se abre en una página segura y volvés acá.</p>
+  <button id="btn-entrar" class="pri">Ingresar</button>
   <p id="msg-ingreso" class="sub" role="status" aria-live="polite"></p>
 </section>
 
@@ -186,86 +271,252 @@ button.peligro{background:var(--peligro);color:#fff;border-color:var(--peligro);
 <!-- ── Una sala ─────────────────────────────────────────────── -->
 <main id="sala" class="oculto">
 
-  <!-- El banner va FUERA de las pestañas: durante una emergencia tiene
-       que verse esté donde esté el operador. -->
+  <!-- El banner va FUERA de cualquier destino: durante una emergencia
+       tiene que verse esté donde esté el operador. -->
   <div id="banner" class="oculto" role="alert">
     <b id="banner-tit"></b><span id="banner-sub"></span>
   </div>
 
-  <section class="card" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
-    <button id="btn-salas" title="Volver a la lista de salas">Todas las salas</button>
+  <div id="encabezado-sala">
+    <button id="btn-volver-salas" title="Volver a la lista de salas">‹ Salas</button>
     <b id="sala-nombre">—</b>
     <span class="pill" id="sala-edad">—</span>
-  </section>
+  </div>
 
   <p id="aviso" class="aviso-linea" role="status" aria-live="polite"></p>
 
-  <nav id="pestanas" aria-label="Secciones">
-    <button data-p="vista" aria-pressed="true">Lo que pasa</button>
-    <button data-p="config" aria-pressed="false">Configuración</button>
-    <button data-p="reles-panel" aria-pressed="false">Equipos</button>
-    <button data-p="hist" aria-pressed="false">Historial</button>
-  </nav>
-
-  <div id="vista">
+  <!-- ══ Inicio ══ -->
+  <div id="d-inicio">
+    <section id="puesta-marcha" class="card oculto">
+      <h2>La sala todavía no está lista</h2>
+      <ol id="pm-lista"></ol>
+    </section>
     <section class="card">
       <div class="grid" id="medidas"></div>
       <p class="sub" id="medidas-pie" style="margin:12px 0 0"></p>
     </section>
-    <section class="card">
-      <h2>Equipos</h2>
-      <div id="salidas"></div>
-    </section>
-    <section class="card">
-      <h2>Lo que va a hacer</h2>
-      <div id="agenda"></div>
-    </section>
-    <section class="card">
-      <h2>Avisos</h2>
-      <div id="alarmas"></div>
+    <section class="card" id="c-atencion">
+      <h2>Atención</h2>
+      <div id="atencion"></div>
       <div style="display:flex;gap:8px;margin-top:12px">
         <button id="btn-ack-seg">Reconocer seguridad</button>
         <button id="btn-ack">Reconocer alarmas</button>
+        <button id="btn-silenciar" class="oculto">Silenciar sirena</button>
       </div>
+    </section>
+    <section class="card">
+      <h2>Próximo</h2>
+      <div id="agenda"></div>
+    </section>
+    <section class="card">
+      <h2>Equipos</h2>
+      <div id="equipos-resumen"></div>
+      <button id="btn-ver-equipos" style="margin-top:10px;width:auto;padding:8px 14px;
+        min-height:40px;font-size:14px">Ver equipos</button>
     </section>
   </div>
 
-  <div id="config" class="oculto"></div>
+  <!-- ══ Control ══ -->
+  <div id="d-control" class="oculto"></div>
 
-  <div id="reles-panel" class="oculto">
+  <!-- ══ Historial ══ -->
+  <div id="d-hist" class="oculto">
     <section class="card">
+      <h2>Historial</h2>
+      <nav id="hist-vars" aria-label="Variable a mostrar"></nav>
+      <div id="grafico"></div>
+      <div id="hist-exportar"></div>
+    </section>
+  </div>
+
+  <!-- ══ Más ══ -->
+  <div id="d-mas" class="oculto">
+    <button class="fila-mas" id="btn-mas-conexion">
+      <span><span class="fm-nombre">Sala y conexión</span>
+      <span class="fm-sub">Nombre, controlador, red local</span></span>
+    </button>
+    <button class="fila-mas" id="btn-mas-equipos">
+      <span><span class="fm-nombre">Equipos</span>
+      <span class="fm-sub">Qué maneja cada relé, fuera de servicio</span></span>
+    </button>
+    <button class="fila-mas" id="btn-mas-gente">
+      <span><span class="fm-nombre">Personas y permisos</span>
+      <span class="fm-sub">Usuarios, roles e invitaciones</span></span>
+    </button>
+    <button class="fila-mas oculto" id="btn-mas-instalacion">
+      <span><span class="fm-nombre">Instalación y servicio</span>
+      <span class="fm-sub">Cómo está armada la sala — sólo Dueño</span></span>
+    </button>
+    <button class="fila-mas" id="btn-mas-cuenta">
+      <span><span class="fm-nombre">Mi cuenta</span>
+      <span class="fm-sub">Quién sos y cerrar sesión</span></span>
+    </button>
+
+    <section id="mas-conexion" class="card oculto"></section>
+    <section id="mas-equipos" class="card oculto">
       <h2>Qué maneja cada relé</h2>
       <p class="sub">Todos los equipos son opcionales: un relé puede quedar
       libre. Cambiar el equipo de un relé se aplica en el controlador con
       las mismas verificaciones que desde la pantalla del tablero.</p>
       <div id="reles"></div>
     </section>
-  </div>
-
-  <div id="hist" class="oculto">
-    <section class="card">
-      <h2>Últimas 24 horas</h2>
-      <div id="grafico"></div>
+    <section id="mas-gente" class="card oculto">
+      <h2>Personas y permisos</h2>
+      <div id="gente-sala"></div>
+    </section>
+    <section id="mas-instalacion" class="card oculto"></section>
+    <section id="mas-cuenta" class="card oculto">
+      <h2>Mi cuenta</h2>
+      <!-- La contraseña ya no se cambia acá: la maneja la página de
+           ingreso (Auth0), con «¿Olvidaste tu contraseña?» en la propia
+           pantalla de entrar. Con Google ni siquiera hay contraseña. -->
+      <p id="cuenta-correo" class="sub"></p>
+      <button id="btn-salir">Cerrar sesión</button>
     </section>
   </div>
 
-  <button id="btn-salir" style="margin-top:8px">Cerrar sesión</button>
+  <nav id="navinf" aria-label="Secciones">
+    <button data-d="inicio" aria-pressed="true">
+      <span class="ico" aria-hidden="true">⌂</span>Inicio</button>
+    <button data-d="control" aria-pressed="false">
+      <span class="ico" aria-hidden="true">⚙</span>Control</button>
+    <button data-d="hist" aria-pressed="false">
+      <span class="ico" aria-hidden="true">📈</span>Historial</button>
+    <button data-d="mas" aria-pressed="false">
+      <span class="ico" aria-hidden="true">⋯</span>Más</button>
+  </nav>
 </main>
 
 <script src="config.js"></script>
 <script src="parametros.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<!-- supabase-js PROPIO y verificado contra el registro de npm (vendor/LEEME.md).
+     Venía de jsDelivr sin integridad: un CDN comprometido operaba la sala
+     con la sesión del usuario (auditoría integral CL-014, 2026-10-10). -->
+<script src="vendor/supabase.js"></script>
+<!-- El cliente de Auth0, vendoreado y verificado igual que supabase-js
+     (vendor/LEEME.md). Abre la página de ingreso y guarda la sesión. -->
+<script src="vendor/auth0.js"></script>
 <script src="app.js"></script>
 <script>
 "use strict";
 const _$ = id => document.getElementById(id);
 const _ver = (el, s) => el && el.classList.toggle("oculto", !s);
 
-// ── Sin clave no se arranca ────────────────────────────────────
-if (!window.CFG || !CFG.anon) {
+// ── Sin configuración completa no se arranca ──────────────────
+//  La de Auth0 cuenta igual que la anon: con el ingreso a medias, el
+//  botón «Ingresar» tiraría un error de Auth0 en inglés que no es de
+//  nadie (regla aprendida en LuxHort, 2026-09-16).
+const A0 = (window.CFG && CFG.auth0) || {};
+if (!window.CFG || !CFG.anon || !A0.domain || !A0.clientId || !A0.audience) {
   _ver(_$("sinconfig"), true);
   _$("sub").textContent = "Sin configurar";
-  throw new Error("falta la clave anon");
+  throw new Error("falta configuracion (anon o auth0) en config.js");
+}
+
+// ── La cuenta la maneja Auth0; los datos, Supabase ─────────────
+//  Mismo esquema que la app de LuxHort (web/nube.js de aquel repo, y
+//  su AUTH0.md): el ingreso es una navegación a la página alojada de
+//  Auth0 y de vuelta; Supabase recibe el ID token por `accessToken` y
+//  sus políticas deciden con el `sub` como identidad (auth-externo.sql).
+//  Con esa opción el módulo de cuentas propio de supabase-js queda
+//  apagado: acá no existe más `cliente.auth`.
+
+//  A dónde vuelve Auth0 después de entrar o salir: esta misma página,
+//  sin query ni hash. Se le saca el «index.html» final a propósito:
+//  Auth0 compara el retorno letra por letra contra su lista blanca
+//  (anotada con barra final), y entrar por un favorito o la PWA
+//  instalada puede traer la URL con `index.html` — en LuxHort eso mató
+//  el ingreso el 2026-09-21 con «Callback URL mismatch».
+const RETORNO = location.origin + location.pathname.replace(/index\.html?$/i, "");
+
+//  El cliente se crea una vez y es asíncrono: todo lo que lo usa espera
+//  esta promesa. `localstorage` para que la sesión sobreviva a cerrar
+//  la pestaña (y a la PWA instalada); refresh tokens para renovarla sin
+//  iframes ocultos.
+const auth0Listo = window.auth0.createAuth0Client({
+  domain: A0.domain,
+  clientId: A0.clientId,
+  cacheLocation: "localstorage",
+  useRefreshTokens: true,
+  authorizationParams: {
+    redirect_uri: RETORNO,
+    audience: A0.audience,
+    ui_locales: "es",
+  },
+});
+
+//  El token que viaja a Supabase en cada consulta. Es el ID TOKEN, no
+//  el access token: Auth0 quita en silencio los claims sin namespace de
+//  los access tokens, y el `role` que pone la acción post-login
+//  viajaría vacío. getTokenSilently() va primero igual: es lo que
+//  renueva la sesión con el refresh token; pero el ID token y el access
+//  token vencen por separado, así que si el ID ya venció se fuerza la
+//  renovación salteando el caché. Sin sesión devuelve nulo y la
+//  biblioteca manda la clave pública sola: las políticas no dejan ver
+//  nada, que es lo correcto.
+async function tokenAuth0() {
+  const c = await auth0Listo;
+  try {
+    await c.getTokenSilently();
+    let claims = await c.getIdTokenClaims();
+    if (!claims || (claims.exp || 0) * 1000 < Date.now() + 60000) {
+      await c.getTokenSilently({ cacheMode: "off" });
+      claims = await c.getIdTokenClaims();
+    }
+    return claims && claims.__raw ? claims.__raw : null;
+  } catch (_) { return null; }
+}
+
+async function haySesion() {
+  const c = await auth0Listo;
+  //  Sin token utilizable no hay sesión, aunque el caché diga que sí:
+  //  el refresh token pudo vencer o haber sido revocado.
+  if (!(await c.isAuthenticated())) return false;
+  return (await tokenAuth0()) !== null;
+}
+
+//  Quién está adentro: { sub, email, name }. El `sub` es la identidad
+//  que ven las políticas de la base (usuario_id de `miembros`).
+async function quienSoy() {
+  const c = await auth0Listo;
+  try { return (await c.getUser()) || null; } catch (_) { return null; }
+}
+
+//  La vuelta desde la página de Auth0. Devuelve nulo si no venimos de
+//  ahí o si entró bien, o el texto del rechazo. Deja la URL limpia en
+//  los dos casos: el `code` es de un solo uso y recargar con él en la
+//  barra daría un error que no es de nadie.
+async function procesarRetorno() {
+  const q = new URLSearchParams(location.search);
+  if (!q.has("code") && !q.has("error")) return null;
+  let error = null;
+  if (q.has("error")) {
+    error = traducirIngreso(q.get("error"), q.get("error_description"));
+  } else {
+    try {
+      const c = await auth0Listo;
+      await c.handleRedirectCallback();
+    } catch (e) {
+      error = traducirIngreso(e.error, e.error_description || e.message);
+    }
+  }
+  history.replaceState(null, "", location.pathname);
+  return error;
+}
+
+//  Los rechazos de Auth0 vienen como código + descripción en inglés. La
+//  acción post-login del tenant rechaza con «correo_sin_confirmar» a
+//  quien todavía no abrió el correo de confirmación.
+function traducirIngreso(codigo, desc) {
+  const d = String(desc || "");
+  if (/correo_sin_confirmar/.test(d))
+    return "Te mandamos un correo para confirmar tu cuenta. Abrí el enlace que trae y volvé a tocar Ingresar.";
+  if (codigo === "access_denied")  return "No se pudo entrar: " + (d || "acceso denegado");
+  if (codigo === "unauthorized")   return "Esta cuenta no tiene acceso: " + (d || "");
+  if (codigo === "invalid_state" || /state/i.test(d))
+    return "El ingreso venció o se abrió en otra pestaña: tocá Ingresar de nuevo.";
+  if (/Failed to fetch|NetworkError/i.test(d)) return "Sin internet";
+  return d || codigo || "No se pudo entrar";
 }
 
 //  Se llama `cliente` y no `sb`: `app.js` ya declara un `sb` en el
@@ -274,16 +525,16 @@ if (!window.CFG || !CFG.anon) {
 //  que es la causa: la pagina se queda en «Conectando...» sin un solo
 //  mensaje en consola, porque el error es de parseo y ocurre antes de
 //  que corra nada.
-const cliente = supabase.createClient(CFG.url, CFG.anon);
+const cliente = supabase.createClient(CFG.url, CFG.anon, { accessToken: tokenAuth0 });
 LuxApp.init(cliente);
 
 let equipoAbierto = false;
 //  Con una sola sala se entra derecho al arrancar: es el caso de todos
 //  los días. Pero si la persona vuelve al índice A PROPÓSITO -tocando
-//  «Todas las salas»- esa comodidad se convierte en un candado: el
-//  botón la saca de la sala, `cargarEquipos()` corre nomás vuelve a
-//  ver una sola sala vinculada, y la reabría en el acto. Para quien
-//  toca el botón, no pasaba nada: la lista aparecía y se cerraba sola.
+//  «‹ Salas»- esa comodidad se convierte en un candado: el botón la
+//  saca de la sala, `cargarEquipos()` corre nomás vuelve a ver una sola
+//  sala vinculada, y la reabría en el acto. Para quien toca el botón,
+//  no pasaba nada: la lista aparecía y se cerraba sola.
 //  Esta bandera, una vez en verdadero, apaga esa comodidad por el
 //  resto de la sesión.
 let volvioASalas = false;
@@ -295,89 +546,69 @@ function msg(t, clase) {
   m.className = "sub " + (clase || "");
 }
 
-//  El botón sólo aparece si el proveedor está realmente configurado.
-//  Con el proveedor apagado, tocarlo saca al operador de la aplicación
-//  y lo deja mirando un error en JSON de Supabase.
-if (CFG.google) {
-  _ver(_$("btn-google"), true);
-  _ver(_$("o-con-correo"), true);
-  _$("btn-google").onclick = () =>
-    cliente.auth.signInWithOAuth({ provider: "google",
-                              options: { redirectTo: location.href } });
-}
-
+//  «Ingresar» manda a la página de Auth0. No vuelve: la página cambia.
 _$("btn-entrar").onclick = async () => {
-  const { error } = await cliente.auth.signInWithPassword({
-    email: _$("correo").value.trim(), password: _$("clave").value });
-  // El motivo del rechazo se muestra. Un "no se pudo entrar" mudo hace
-  // que la gente pruebe la misma contraseña cinco veces.
-  if (error) msg(error.message, "err");
+  const b = _$("btn-entrar");
+  b.disabled = true; b.textContent = "Abriendo el ingreso…";
+  try { await (await auth0Listo).loginWithRedirect(); }
+  catch (e) {
+    msg(traducirIngreso(e.error, e.message), "err");
+    b.disabled = false; b.textContent = "Ingresar";
+  }
 };
 
-_$("btn-crear").onclick = async () => {
-  const { data, error } = await cliente.auth.signUp({
-    email: _$("correo").value.trim(), password: _$("clave").value });
-  if (error) { msg(error.message, "err"); return; }
-  //  La cuenta queda lista y con sesion abierta: el cambio de estado de
-  //  autenticacion se encarga de mostrar las salas. Decir «te mandamos
-  //  un correo» era mentira -no llegaba ninguno- y la persona se
-  //  quedaba esperando con la cuenta ya creada.
-  msg(data && data.session ? "Cuenta creada."
-      : "Te mandamos un correo para confirmar.", "ok");
+//  Cierra la sesión acá Y en Auth0, y vuelve a esta página limpia.
+_$("btn-salir").onclick = async () => {
+  const c = await auth0Listo;
+  await c.logout({ logoutParams: { returnTo: RETORNO } });
 };
-
-_$("btn-olvide").onclick = async () => {
-  const c = _$("correo").value.trim();
-  if (!c) return msg("Escribí tu correo primero.", "warn");
-  const { error } = await cliente.auth.resetPasswordForEmail(c,
-    { redirectTo: location.href });
-  if (error) return msg(error.message, "err");
-  //  Sin servidor de correo propio, Supabase usa su servicio de
-  //  cortesía: dos correos por hora y sólo a la casilla del dueño del
-  //  proyecto. Decir «revisá tu correo» a secas deja a cualquier otro
-  //  operador mirando una bandeja que no va a recibir nada, sin manera
-  //  de saber si el problema es suyo. Se dice lo que de verdad pasa.
-  msg(CFG.correoPropio
-      ? "Si esa cuenta existe, te llega un enlace."
-      : "Pedido enviado. Ojo: todavía no hay servidor de correo propio, " +
-        "así que el enlace sólo llega a la casilla del dueño del proyecto. " +
-        "Si no sos vos, pedile que te cambie la contraseña.", "ok");
-};
-
-_$("btn-salir").onclick = async () => { await cliente.auth.signOut(); location.reload(); };
 
 // ── Sesión ─────────────────────────────────────────────────────
-//  El cliente de Supabase SOSTIENE UN CERROJO mientras corre el callback
-//  de `onAuthStateChange`. Cualquier llamada de adentro que necesite la
-//  sesión -y `cliente.from(...)` la necesita- se traba contra ese mismo
-//  cerrojo y no vuelve nunca.
-//
-//  No da error ni excepción: la promesa simplemente no resuelve. El
-//  síntoma era un panel vacío y mudo al recargar con la sesión abierta,
-//  que es el camino más común de todos. El `setTimeout` saca la llamada
-//  de adentro del callback. Es feo y es la forma recomendada.
+//  Con Auth0 no hay `onAuthStateChange`: la sesión sólo cambia al
+//  volver de la página de ingreso (se procesa acá abajo) o al tocar
+//  «Cerrar sesión» (que recarga). La renovación del token es silenciosa
+//  y no mueve la interfaz.
 let cargando = null;
-cliente.auth.onAuthStateChange((_e, sesion) => setTimeout(() => arrancar(sesion), 0));
-cliente.auth.getSession().then(({ data }) => arrancar(data.session));
+let yoMismo  = null;   // { sub, email } — lo usa «Personas y permisos»
 
-async function arrancar(sesion) {
-  const dentro = !!sesion;
+async function arrancar(dentro) {
   _ver(_$("ingreso"), !dentro);
   if (!dentro) {
     _ver(_$("equipos"), false);
     _ver(_$("sala"), false);
+    document.body.classList.remove("con-navinf");
     _$("sub").textContent = "Entrá para ver tus salas";
     return;
   }
-  _$("sub").textContent = sesion.user.email || "";
-  // Si ya hay una sala abierta no se vuelve al índice: sería sacarle de
-  // la vista lo que estaba mirando cada vez que se refresca el token,
-  // que pasa solo y sin aviso.
+  yoMismo = await quienSoy();
+  const correo = (yoMismo && yoMismo.email) || "";
+  _$("sub").textContent = correo;
+  const quien = _$("cuenta-correo");
+  if (quien) quien.textContent = correo ? "Entraste como " + correo : "";
+  //  El perfil se registra en cada entrada: es lo que deja (sub, correo)
+  //  en la tabla `perfiles`, de donde salen las invitaciones por correo
+  //  y los avisos (auth-externo.sql). Si falla no se corta nada: la
+  //  próxima entrada lo reintenta.
+  try { await cliente.rpc("registrar_perfil"); } catch (_) {}
   if (equipoAbierto) return;
   _ver(_$("equipos"), true);
   cargando = (cargando || Promise.resolve()).then(cargarEquipos).catch(() => {});
   await cargando;
 }
+
+//  El arranque: si venimos de la página de Auth0 se consume el código
+//  de la URL (o se muestra el motivo del rechazo), y después se decide
+//  con la sesión que haya quedado.
+(async () => {
+  try {
+    const rechazo = await procesarRetorno();
+    if (rechazo) msg(rechazo, "err");
+    await arrancar(await haySesion());
+  } catch (e) {
+    msg(traducirIngreso(null, e && e.message), "err");
+    await arrancar(false);
+  }
+})();
 
 // ── Las salas ──────────────────────────────────────────────────
 //  Cada sala tiene su propio controlador PoE. Acá se crean, se
@@ -407,7 +638,9 @@ function _boton(texto, alTocar, clase) {
 //  Un error de PostgREST trae el motivo en `message`. Mostrarlo importa:
 //  «no se pudo» a secas hace que la persona repita lo mismo tres veces.
 function _porQue(error, siNo) {
-  return (error && (error.message || error.hint)) || siNo;
+  const m = error && (error.message || error.hint);
+  if (!m) return siNo;
+  return LuxApp.enCastellano ? LuxApp.enCastellano(m) : m;
 }
 
 //  El diálogo propio vive en app.js y se usa desde acá. Reemplaza a
@@ -457,6 +690,13 @@ async function renombrarSala(eq) {
     return;
   }
   await cargarEquipos();
+  //  Si la sala renombrada es la que está abierta, el nombre del
+  //  encabezado compacto se actualiza en el acto.
+  const abierta = LuxApp.equipoActual();
+  if (abierta && abierta.id === eq.id) {
+    abierta.nombre = nombre;
+    _$("sala-nombre").textContent = nombre;
+  }
 }
 
 async function borrarSala(eq) {
@@ -501,9 +741,14 @@ function mostrarCodigo(equipoId, codigo) {
   const caja = _$("codigo-" + equipoId);
   if (!caja) return;
   caja.innerHTML = "";
-  caja.appendChild(_el("p", "sub", "Escribí este código en el portal del " +
-    "controlador, en Configuración → Nube. Vale por 30 minutos y se usa " +
-    "una sola vez."));
+  //  El camino con las palabras que se ven en el equipo. Decía «en
+  //  Configuración → Nube», un menú que el portal no tiene: la tarjeta se
+  //  llama «Vincular a una sala» y se llega desde la página «Conexión»
+  //  de la pantalla. Auditoría de interfaz, 2026-09-25.
+  caja.appendChild(_el("p", "sub", "En la pantalla del controlador, página " +
+    "«Conexión»: escaneá el QR, abrí la dirección que figura debajo y entrá " +
+    "con el código de acceso. En la tarjeta «Vincular a una sala», escribí " +
+    "este código. Vale por 30 minutos y se usa una sola vez."));
   const c = _el("b", null, codigo);
   c.style.cssText = "font-size:28px;letter-spacing:4px;display:block;" +
     "margin:8px 0;font-family:ui-monospace,monospace";
@@ -544,14 +789,8 @@ function tarjetaSala(eq) {
   acciones.appendChild(_boton(
     vinculada ? "Cambiar controlador" : "Vincular controlador",
     () => vincular(eq)));
-  acciones.appendChild(_boton("Gente", () => verGente(eq)));
   acciones.appendChild(_boton("Borrar", () => borrarSala(eq)));
   c.appendChild(acciones);
-
-  const gente = _el("div", "oculto");
-  gente.id = "gente-" + eq.id;
-  gente.style.cssText = "margin-top:10px";
-  c.appendChild(gente);
 
   const caja = _el("div", "oculto");
   caja.id = "codigo-" + eq.id;
@@ -613,9 +852,9 @@ async function cargarEquipos() {
   //  justamente el botón de vincular.
   //
   //  Y sólo si nadie pidió ver el índice a propósito. Sin `!volvioASalas`
-  //  acá, tocar «Todas las salas» con una única sala vinculada abría y
-  //  cerraba la lista sola: el botón volvía a traer exactamente la
-  //  condición que acababa de cumplirse.
+  //  acá, tocar «‹ Salas» con una única sala vinculada abría y cerraba
+  //  la lista sola: el botón volvía a traer exactamente la condición
+  //  que acababa de cumplirse.
   if (data.length === 1 && data[0].serie && !equipoAbierto && !volvioASalas) {
     equipoAbierto = true;
     LuxApp.abrirSala(data[0]);
@@ -623,10 +862,17 @@ async function cargarEquipos() {
 }
 
 // ── La gente de la sala ────────────────────────────────────────
-//  Invitar, cambiar el rol y sacar. Sin correo de por medio: si la
-//  persona no tenía cuenta, se le crea una y sale UNA VEZ una
-//  contraseña temporal que el dueño le pasa en mano. Después ella se la
-//  cambia sola, que eso sí funciona sin correo.
+//  Invitar, cambiar el rol y sacar. La cuenta se la hace cada uno en la
+//  página de ingreso (Google o correo, con confirmación de verdad): acá
+//  sólo se anota QUIÉN puede ver esta sala. Si la persona todavía no
+//  entró nunca, la invitación queda pendiente y se activa sola en su
+//  primer ingreso (auth-externo.sql). Hasta el 2026-10-11 el dueño le
+//  creaba la cuenta en el servidor con una contraseña temporal; ese
+//  camino murió con el ingreso propio.
+//
+//  Vive dentro de «Más → Personas y permisos» de la sala ya abierta,
+//  y no en la tarjeta del índice: es una función de administración del
+//  día a día de ESA sala, no algo que se decide antes de entrar.
 
 const ROLES = [
   ["dueno",    "Dueño",    "Todo, más invitar gente y tocar la instalación"],
@@ -635,18 +881,12 @@ const ROLES = [
 ];
 const nombreRol = r => (ROLES.find(x => x[0] === r) || [r, r])[1];
 
-async function verGente(eq) {
-  const caja = _$("gente-" + eq.id);
-  if (!caja) return;
-  //  Segundo toque: se cierra. Es una lista larga y molesta tenerla
-  //  abierta en las cuatro salas a la vez.
-  if (!caja.classList.contains("oculto") && caja.children.length) {
-    _ver(caja, false);
-    return;
-  }
+async function verGente() {
+  const eq = LuxApp.equipoActual();   // la sala abierta, para «Más → Gente»
+  const caja = _$("gente-sala");
+  if (!caja || !eq) return;
   caja.innerHTML = "";
   caja.appendChild(_el("p", "sub", "Buscando…"));
-  _ver(caja, true);
 
   const { data, error } = await cliente.rpc("miembros_de_sala",
     { p_equipo_id: eq.id });
@@ -660,41 +900,40 @@ async function verGente(eq) {
   const lista = data || [];
   //  Sólo el dueño administra. Se averigua de la propia lista: si el
   //  que mira figura como dueño, puede. No hace falta preguntar aparte.
-  const yo = (await cliente.auth.getUser()).data.user;
-  const soyDuenio = lista.some(m => m.usuario_id === (yo && yo.id) &&
+  //  `yoMismo.sub` es la identidad del token, la misma que guarda la
+  //  base en `usuario_id` desde el ingreso con Auth0.
+  const miSub = yoMismo && yoMismo.sub;
+  const soyDuenio = lista.some(m => m.usuario_id === miSub &&
                                     m.rol === "dueno");
 
   lista.forEach(m => {
     const f = _el("div", "renglon");
     const izq = _el("div");
     izq.appendChild(_el("b", null, m.correo));
+    //  Una invitación que nadie reclamó todavía se distingue: no es un
+    //  miembro, es una puerta abierta a ese correo.
     izq.appendChild(_el("p", "sub", nombreRol(m.rol) +
-      (m.usuario_id === (yo && yo.id) ? " · sos vos" : "")));
+      (m.usuario_id === miSub ? " · sos vos" : "") +
+      (m.pendiente ? " · invitación pendiente: entra cuando ingrese con ese correo" : "")));
     f.appendChild(izq);
 
     if (soyDuenio) {
       const der = _el("div");
       der.style.cssText = "display:flex;gap:6px;align-items:center";
-      const sel = document.createElement("select");
-      sel.setAttribute("aria-label", "rol de " + m.correo);
-      ROLES.forEach(([v, n]) => {
-        const o = document.createElement("option");
-        o.value = v; o.textContent = n;
-        sel.appendChild(o);
-      });
-      sel.value = m.rol;
-      sel.onchange = () => cambiarRol(eq, m, sel);
-      der.appendChild(sel);
-      //  Restablecer sólo aparece cuando el servidor dijo que se
-      //  puede. La condición es del servidor, no de la pantalla: acá
-      //  sólo se refleja, para no ofrecer un botón que va a ser
-      //  rechazado.
-      if (m.puede_restablecerse) {
-        const r = _boton("Contraseña", () => restablecerClave(eq, m), "chico");
-        r.title = "Generar una contraseña nueva para esta persona";
-        der.appendChild(r);
+      if (!m.pendiente) {
+        const sel = document.createElement("select");
+        sel.setAttribute("aria-label", "rol de " + m.correo);
+        ROLES.forEach(([v, n]) => {
+          const o = document.createElement("option");
+          o.value = v; o.textContent = n;
+          sel.appendChild(o);
+        });
+        sel.value = m.rol;
+        sel.onchange = () => cambiarRol(eq, m, sel);
+        der.appendChild(sel);
       }
-      const b = _boton("Sacar", () => sacarMiembro(eq, m), "chico");
+      const b = _boton(m.pendiente ? "Cancelar" : "Sacar",
+                       () => sacarMiembro(eq, m), "chico");
       b.style.marginRight = "0";
       der.appendChild(b);
       f.appendChild(der);
@@ -719,8 +958,9 @@ async function verGente(eq) {
 async function invitar(eq) {
   const correo = await preguntar({
     titulo: "Invitar a la sala «" + eq.nombre + "»",
-    texto: "Si esa persona todavía no tiene cuenta, le creamos una y te " +
-           "damos una contraseña para pasarle. Después ella se la cambia.",
+    texto: "La persona entra a la aplicación con su cuenta de Google o " +
+           "creándose una con ese correo, y ve esta sala. Si todavía no " +
+           "tiene cuenta, la invitación la espera.",
     campo: "Correo de la persona",
     aceptar: "Invitar",
     validar: v => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)
@@ -752,35 +992,13 @@ async function invitar(eq) {
     return;
   }
   const f = Array.isArray(data) ? data[0] : data;
-  await verGente(eq);           // se cierra
-  await verGente(eq);           // y se vuelve a abrir, ya con el nuevo
+  await verGente();           // se refresca la lista
 
-  if (f && f.clave_temporal) mostrarClaveTemporal(eq, f);
-  else await avisarModal("Listo",
-      correo + " ya tenía cuenta, así que entra con su contraseña de " +
-      "siempre. Ya aparece en la lista de la sala.");
-}
-
-//  La contraseña temporal se muestra UNA vez, grande y con el paso a
-//  paso. No se guarda en ningún lado en claro, así que si esta pantalla
-//  se cierra sin copiarla hay que sacar a la persona y volver a
-//  invitarla.
-function mostrarClaveTemporal(eq, f) {
-  const caja = _$("gente-" + eq.id);
-  if (!caja) return;
-  const marco = _el("div");
-  marco.style.cssText = "margin-top:12px;padding:12px;border-radius:8px;" +
-    "background:rgba(127,127,127,.12)";
-  marco.appendChild(_el("p", "sub", "Cuenta creada para " + f.correo +
-    ". Pasale esta contraseña; es la única vez que se muestra."));
-  const c = _el("b", null, f.clave_temporal);
-  c.style.cssText = "font-size:24px;letter-spacing:2px;display:block;" +
-    "margin:8px 0;font-family:ui-monospace,monospace;word-break:break-all";
-  marco.appendChild(c);
-  marco.appendChild(_el("p", "sub", "Que entre con su correo y esta " +
-    "contraseña, y que la cambie desde «Mi cuenta». Si la perdés, sacá a " +
-    "la persona de la sala y volvé a invitarla."));
-  caja.appendChild(marco);
+  await avisarModal("Listo", f && f.pendiente
+      ? correo + " todavía no entró nunca: la invitación queda " +
+        "esperándola. Avisale que entre a la aplicación con ese correo " +
+        "(o con Google, si es su cuenta de Google) y va a ver la sala."
+      : correo + " ya tenía cuenta: ya aparece en la lista de la sala.");
 }
 
 async function cambiarRol(eq, m, sel) {
@@ -801,66 +1019,70 @@ async function cambiarRol(eq, m, sel) {
                       _porQue(error, "No se pudo cambiar el rol."));
     return;
   }
-  await verGente(eq); await verGente(eq);
+  await verGente();
 }
 
-//  Para el operador que se olvidó la contraseña. Es el único agujero
-//  que dejaba el alta sin correo: sin esto, quien la perdía no tenía
-//  cómo volver a entrar.
-async function restablecerClave(eq, m) {
-  const ok = await preguntar({
-    titulo: "Nueva contraseña para " + m.correo,
-    texto: "Se genera una contraseña nueva y la anterior deja de servir " +
-           "en el acto. Si esa persona está con la sesión abierta en " +
-           "algún lado, se le cierra. Vas a tener que pasarle la nueva.",
-    aceptar: "Generar",
-  });
-  if (!ok) return;
-  const { data, error } = await cliente.rpc("restablecer_clave_miembro",
-    { p_equipo_id: eq.id, p_usuario_id: m.usuario_id });
-  if (error) {
-    await avisarModal("No se pudo restablecer",
-                      _porQue(error, "No se pudo restablecer."));
-    return;
-  }
-  const f = Array.isArray(data) ? data[0] : data;
-  await verGente(eq); await verGente(eq);
-  if (f && f.clave_temporal) mostrarClaveTemporal(eq, f);
-}
+//  «Olvidé mi contraseña» ya no es asunto de la sala: vive en la propia
+//  página de ingreso (Auth0), con el correo de recuperación de verdad.
 
 async function sacarMiembro(eq, m) {
   const ok = await preguntar({
-    titulo: "Sacar a " + m.correo,
-    texto: "Deja de ver esta sala y de poder operarla. Su cuenta no se " +
-           "borra: puede estar en otras salas.",
-    aceptar: "Sacar de la sala",
+    titulo: m.pendiente ? "Cancelar la invitación a " + m.correo
+                        : "Sacar a " + m.correo,
+    texto: m.pendiente
+      ? "Si esa persona entra después, no va a ver esta sala."
+      : "Deja de ver esta sala y de poder operarla. Su cuenta no se " +
+        "borra: puede estar en otras salas.",
+    aceptar: m.pendiente ? "Cancelar invitación" : "Sacar de la sala",
     peligro: true,
   });
   if (!ok) return;
   const { error } = await cliente.rpc("quitar_miembro",
-    { p_equipo_id: eq.id, p_usuario_id: m.usuario_id });
+    { p_equipo_id: eq.id, p_usuario_id: m.usuario_id, p_correo: m.correo });
   if (error) {
     await avisarModal("No se pudo sacar", _porQue(error, "No se pudo sacar."));
     return;
   }
-  await verGente(eq); await verGente(eq);
+  await verGente();
 }
 
 //  Desde adentro de una sala siempre se puede volver a la lista. Sin
 //  esto, el que tiene una sola sala entra derecho y no puede llegar
 //  nunca a renombrarla ni a crear la segunda.
-_$("btn-salas").onclick = () => {
+_$("btn-volver-salas").onclick = () => {
   equipoAbierto = false;
   volvioASalas = true;
+  document.body.classList.remove("con-navinf");
   LuxApp.cerrarSala();
   cargarEquipos();
 };
 
-// ── Pestañas y acciones ────────────────────────────────────────
-document.querySelectorAll("#pestanas button").forEach(b =>
-  b.onclick = () => LuxApp.pestana(b.dataset.p));
-_$("btn-ack").onclick = () => LuxApp.mandar(LuxApp.CMD.ALARMA_ACK, 0xFFFF, 0);
-_$("btn-ack-seg").onclick = () => LuxApp.mandar(LuxApp.CMD.ACK_SEGURIDAD, 0, 0);
+// ── Navegación inferior y «Más» ────────────────────────────────
+document.querySelectorAll("#navinf button").forEach(b =>
+  b.onclick = () => LuxApp.pestana(b.dataset.d));
+
+_$("btn-ack").onclick = () => LuxApp.mandar(LuxApp.CMD.ALARMA_ACK, 0xFFFF, 0,
+                                            "ack-alarmas", "reconocer las alarmas");
+//  Reconocer la seguridad rearma la inyección de CO2: pregunta y dice qué
+//  habilita (ver `reconocerSeguridad` en app.js).
+_$("btn-ack-seg").onclick = () => LuxApp.reconocerSeguridad();
+//  Silenciar pregunta antes: quien calla la sirena desde el teléfono no
+//  ve si hay alguien en la sala (ver `silenciarSirena` en app.js).
+_$("btn-silenciar").onclick = () => LuxApp.silenciarSirena();
+_$("btn-ver-equipos").onclick = () => LuxApp.pestana("mas", "equipos");
+
+//  Cada fila de «Más» abre su propia sub-sección, una a la vez: es una
+//  lista de destinos, no un acordeón donde conviene ver dos a la vez.
+function _abrirSubMas(cual) {
+  ["conexion", "equipos", "gente", "instalacion", "cuenta"].forEach(k =>
+    _ver(_$("mas-" + k), k === cual));
+  if (cual === "gente") verGente();
+}
+_$("btn-mas-conexion").onclick = () => _abrirSubMas("conexion");
+_$("btn-mas-equipos").onclick = () => _abrirSubMas("equipos");
+_$("btn-mas-gente").onclick = () => _abrirSubMas("gente");
+_$("btn-mas-instalacion").onclick = () => _abrirSubMas("instalacion");
+_$("btn-mas-cuenta").onclick = () => _abrirSubMas("cuenta");
 </script>
 
 <script>
