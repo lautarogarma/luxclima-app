@@ -1379,6 +1379,18 @@ function filaControl(id) {
   const t = document.createElement("span");
   t.className = "fila-t";
   t.textContent = p.t;
+  //  El «?» de los ajustes que pueden dar duda (pedido del propietario,
+  //  2026-10-12). El texto es el MISMO que el de la pantalla: los dos
+  //  salen de tools/gen_parametros.py (campo `a`).
+  if (p.a) {
+    const q = document.createElement("button");
+    q.className = "ayuda";
+    q.textContent = "?";
+    q.setAttribute("aria-label", "Qué es: " + p.t);
+    q.onclick = () => dialogo({ titulo: p.t, texto: p.a,
+                                aceptar: "Entendido", soloAceptar: true });
+    t.appendChild(q);
+  }
   row.appendChild(t);
 
   //  Mientras espera confirmación, el control se DESHABILITA de verdad.

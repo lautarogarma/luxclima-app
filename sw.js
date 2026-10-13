@@ -12,7 +12,7 @@
 //  Se cachea el CASCARON -la pagina, los estilos, el guion- que no dice
 //  nada sobre la sala. Los datos se piden siempre a la red, y si no hay
 //  red la interfaz lo dice con el velo.
-const CACHE = "clima-v13";   // v13: las órdenes salen por pedir_comando (C-21, 2026-10-12)
+const CACHE = "clima-v14";   // v14: el arranque sale de index.html a arranque.js (CSP, 2026-10-12)
 
 //  El cascaron COMPLETO. Antes faltaban `app.js` y `parametros.js`, y
 //  sin ellos abrir sin conexion daba una pagina en blanco: cargaba el
@@ -20,7 +20,7 @@ const CACHE = "clima-v13";   // v13: las órdenes salen por pedir_comando (C-21,
 //  que venia de un CDN y este archivo ignoraba por ajeno: sin red, la
 //  app quedaba en «Conectando…» muda (CL-014, 2026-10-10). Ahora es
 //  propio (vendor/, con su procedencia en vendor/LEEME.md).
-const CASCARON = ["./index.html", "./config.js", "./app.js",
+const CASCARON = ["./index.html", "./config.js", "./app.js", "./arranque.js",
                   "./parametros.js", "./manifest.webmanifest",
                   "./vendor/supabase.js", "./vendor/auth0.js"];
 
