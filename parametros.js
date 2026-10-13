@@ -12,14 +12,14 @@
 //           8 entero y 9 decimas, con el cero «apagado»
 //           10 hora de un pulso: bit 15 = activo, cero «apagado»
 window.PARAMETROS = {
-  1: {t:"Objetivo (ppm)", k:"num", s:"CO2", paso:50, min:400, max:1500, f:0, a:"El CO₂ que querés en la sala. Inyecta cuando baja de objetivo menos la banda muerta y corta al llegar al objetivo. El equipo no deja pasar de 1500 ppm."},
+  1: {t:"Objetivo (ppm)", k:"num", s:"CO2", paso:50, min:400, max:1500, f:0, a:"El CO₂ que querés en la sala. Inyecta cuando baja de objetivo menos la banda muerta y corta al llegar al objetivo. El equipo no deja pasar de 1500 ppm, ni subirlo tan cerca del techo de higiene que la extracción tire lo inyectado (ver el techo)."},
   2: {t:"Banda muerta (ppm)", k:"num", s:"CO2", paso:25, min:25, max:500, f:0, a:"Cuánto tiene que bajar el CO₂ por debajo del objetivo para volver a inyectar. Sin banda, la válvula abriría y cerraría a cada rato. Con objetivo 1200 y banda 100: inyecta debajo de 1100 y corta en 1200."},
   3: {t:"Inyección de CO₂", k:"llave", s:"Que atiende cada demanda"},
   4: {t:"Huso horario (min respecto de UTC)", k:"num", s:"Conexion", paso:60, min:-720, max:840, f:0, inst:1, a:"Minutos respecto de UTC: −180 para Argentina. Si está mal, todo lo que depende de la hora (luz, riego, CO₂) corre desplazado."},
   5: {t:"Demora tras encender la luz (min)", k:"num", s:"CO2", paso:15, min:0, max:240, f:0, a:"Con «Cuándo inyectar» en Fotoperíodo: cuántos minutos espera después de encender la luz antes de inyectar."},
   6: {t:"Cortar antes de apagar la luz (min)", k:"num", s:"CO2", paso:5, min:0, max:120, f:0, a:"Con «Cuándo inyectar» en Fotoperíodo: deja de inyectar estos minutos antes de apagar la luz, para no dejar gas que la planta ya no va a usar."},
   7: {t:"Cuándo inyectar", k:"lista", s:"CO2", a:"Fotoperíodo (recomendado): con luz, respetando la demora y el corte. Sólo con luz encendida: cada vez que hay luz. Siempre: también de noche, cuando la planta no usa el gas.", op:["Siempre, aun de noche","Solo con luz encendida","Fotoperíodo"]},
-  8: {t:"Techo de higiene (ppm)", k:"num", s:"CO2", paso:100, min:0, max:2500, f:7, piso:600, a:"Un límite de aire: si el CO₂ pasa este valor, la extracción renueva el aire hasta que baja al 90 % del techo. Tiene que quedar POR ENCIMA del objetivo: si queda por debajo, la extracción tira el gas que la válvula acaba de inyectar. «Sin techo» lo apaga; el mínimo útil es 600."},
+  8: {t:"Techo de higiene (ppm)", k:"num", s:"CO2", paso:100, min:0, max:2500, f:7, piso:600, a:"Un límite de aire: si el CO₂ pasa este valor, la extracción renueva el aire hasta que baja al 90 % del techo. Con la inyección habilitada tiene que quedar en el objetivo dividido 0,9 o más (con 1200 ppm, desde 1334): más abajo la extracción tiraría el gas que la válvula acaba de inyectar, y el equipo no toma el cambio. «Sin techo» lo apaga; el mínimo útil es 600."},
   9: {t:"Temp máxima de día (°C)", k:"num", s:"Temperatura y humedad de sala", paso:5, min:100, max:500, f:1},
   10: {t:"Temp máxima de noche (°C)", k:"num", s:"Temperatura y humedad de sala", paso:5, min:100, max:500, f:1},
   11: {t:"Hum máxima de día (%)", k:"num", s:"Temperatura y humedad de sala", paso:10, min:200, max:1000, f:1},
