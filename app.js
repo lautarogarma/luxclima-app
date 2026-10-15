@@ -40,7 +40,22 @@ const CMD = { ACK_SEGURIDAD: 1, ALARMA_ACK: 2, ALARMA_SILENCIAR: 3,
              SATURAR_SUSTRATO: 12, RESET_CONSUMO_CO2: 13,
              //  C-19 (mapa 26): MANUAL_ON con la confirmación de que se
              //  prende una luz fuera de la fase de luz.
-             MANUAL_ON_NOCHE: 16 };
+             MANUAL_ON_NOCHE: 16,
+             //  C-26 (mapa 30): las actualizaciones. Buscar, y actualizar
+             //  el controlador (arg1 0) o la pantalla (arg1 1).
+             OTA_BUSCAR: 21, OTA_ACTUALIZAR: 22 };
+
+//  El estado de una actualización (HmiOtaEstado en el contrato): los
+//  textos de `hmiTextoOta`, en el mismo orden, para que el teléfono y el
+//  vidrio digan lo mismo.
+const OTA = { NADA: 0, BUSCANDO: 1, AL_DIA: 2, DISPONIBLE: 3, DESCARGANDO: 4,
+              VERIFICANDO: 5, ENVIANDO: 6, ESPERANDO: 7, REINICIANDO: 8,
+              ERROR: 9, SIN_RED: 10, DESHABILITADA: 11, A_PRUEBA: 12 };
+const TEXTO_OTA = ["sin buscar", "buscando…", "es la última versión",
+  "hay una versión nueva", "descargando…", "verificando…",
+  "enviando a la pantalla…", "instalada: se reinicia cuando se pueda",
+  "reiniciando", "no se pudo actualizar", "sin internet",
+  "se actualiza por cable", "versión nueva a prueba"];
 //  El canal va en el byte alto y el estado en el bajo, como todo
 //  parámetro que habla de un canal.
 
@@ -257,31 +272,39 @@ async function mandar(codigo, arg1, arg2, claveVuelo, queDice) {
           "warn");
     return;
   }
-  if (claveVuelo !== undefined)
-    enVuelo.set(claveVuelo, { desde: Date.now(), dice: queDice || "" });
+  //  La entrada es de ESTA orden: al resolverse se borra sólo si sigue
+  //  siendo la misma. Con la misma clave en otra sala («rele1»,
+  //  «ack-seg»), borrar por clave le sacaba el candado a la orden de la
+  //  otra sala y un segundo toque la duplicaba (auditoría general
+  //  2026-10-14).
+  const entrada = { desde: Date.now(), dice: queDice || "" };
+  if (claveVuelo !== undefined) enVuelo.set(claveVuelo, entrada);
   pintarTodo();
 
+  const t0 = Date.now();
   const { data, error } = await sb.rpc("pedir_comando", {
     p_equipo_id: equipoActual.id, p_codigo: codigo,
     p_arg1: arg1 | 0, p_arg2: arg2 | 0,
   });
+  //  El momento del pedido según ESTE reloj: la mitad del viaje. El
+  //  servidor anota el suyo en `pedido`; la diferencia es el desfase.
+  const tPedido = (t0 + Date.now()) / 2;
 
   if (error || !data) {
-    if (claveVuelo !== undefined) enVuelo.delete(claveVuelo);
+    soltarVuelo(claveVuelo, entrada);
     aviso("No se pudo enviar: " +
           enCastellano(error ? error.message : "el servidor no devolvió la orden"),
           "err");
     pintarTodo();
     return;
   }
-  vigilar(data, claveVuelo);
+  vigilar(data, claveVuelo, entrada, tPedido);
 }
 
-//  Qué se pidió, para decirlo en el resultado. «Hecho.» a secas no dice
-//  QUÉ se aplicó, y con dos órdenes seguidas no se sabe cuál volvió.
-function queSePidio(claveVuelo) {
-  const e = claveVuelo !== undefined ? enVuelo.get(claveVuelo) : null;
-  return e && e.dice ? e.dice : "";
+//  Se suelta el candado de una orden sólo si sigue siendo el suyo.
+function soltarVuelo(claveVuelo, entrada) {
+  if (claveVuelo !== undefined && enVuelo.get(claveVuelo) === entrada)
+    enVuelo.delete(claveVuelo);
 }
 
 //  Se sigue el comando hasta que el equipo lo resuelve, y se muestra su
@@ -295,8 +318,20 @@ function queSePidio(claveVuelo) {
 //  repetido. Dos «Saturar» eran dos saturaciones. El primer minuto se
 //  mira seguido (lo normal es que se resuelva en segundos); después, más
 //  espaciado, hasta pasar el vencimiento.
-async function vigilar(id, claveVuelo) {
-  let ultimo = "pendiente", vence = null;
+//
+//  Las horas se comparan con el reloj del SERVIDOR (auditoría general
+//  2026-10-14): `vence` es hora del servidor y `Date.now()` la del
+//  teléfono. Con el teléfono tres minutos adelantado, la primera lectura
+//  ya daba la orden por vencida —«no se ejecutó, volvé a intentar»— con
+//  la orden viva en la cola: el equipo la tomaba igual y el usuario ya la
+//  había repetido. El desfase sale de `pedido`, que anota el servidor.
+async function vigilar(id, claveVuelo, entrada, tPedido) {
+  let ultimo = "pendiente", vence = null, desfase = null;
+  const ahoraServidor = () => Date.now() + (desfase || 0);
+  //  Qué se pidió, para decirlo en el resultado. «Hecho.» a secas no
+  //  dice QUÉ se aplicó, y con dos órdenes seguidas no se sabe cuál
+  //  volvió.
+  const dice = (entrada && entrada.dice) || "";
   //  La sala de ESTA orden. Con la espera de hasta seis minutos, el
   //  resultado puede llegar con otra sala abierta: entonces no se avisa
   //  ni se repinta —el aviso vive dentro de la sala en pantalla y se lo
@@ -309,17 +344,20 @@ async function vigilar(id, claveVuelo) {
     let data = null;
     try {
       ({ data } = await sb.from("comandos")
-        .select("estado,resultado,vence").eq("id", id).maybeSingle());
+        .select("estado,resultado,vence,pedido").eq("id", id).maybeSingle());
     } catch (e) { data = null; }
     if (!data) continue;
     ultimo = data.estado;
     if (data.vence) vence = new Date(data.vence);
+    if (desfase === null && data.pedido && tPedido) {
+      const p = new Date(data.pedido).getTime();
+      if (isFinite(p)) desfase = p - tPedido;
+    }
     //  Pasado el vencimiento con la orden todavía pendiente, ya no puede
     //  ejecutarse: se deja de mirar y se dice eso, que ahora sí es cierto.
-    if (ultimo === "pendiente" && vence && Date.now() > vence.getTime() + 5000) break;
-    const dice = queSePidio(claveVuelo);
+    if (ultimo === "pendiente" && vence && ahoraServidor() > vence.getTime() + 5000) break;
     if (data.estado === "aplicado") {
-      if (claveVuelo !== undefined) enVuelo.delete(claveVuelo);
+      soltarVuelo(claveVuelo, entrada);
       if (!misma()) return;
       aviso(dice ? "Aplicado: " + dice + "." : "Hecho.", "ok"); refrescar(); return;
     }
@@ -329,7 +367,7 @@ async function vigilar(id, claveVuelo) {
     //  que hay que asumir.
     if (data.estado === "rechazado" || data.estado === "vencido" ||
         data.estado === "indeterminado") {
-      if (claveVuelo !== undefined) enVuelo.delete(claveVuelo);
+      soltarVuelo(claveVuelo, entrada);
       const motivo = data.resultado ||
             (data.estado === "indeterminado"
               ? "El equipo la tomó y no dijo qué pasó: pudo haberse ejecutado."
@@ -345,7 +383,7 @@ async function vigilar(id, claveVuelo) {
       pintarTodo(); return;
     }
   }
-  if (claveVuelo !== undefined) enVuelo.delete(claveVuelo);
+  soltarVuelo(claveVuelo, entrada);
   if (!misma()) return;
   //  Sin resolución. Lo que se dice depende de dónde quedó, y la
   //  diferencia es la que importa: si el equipo NO la tomó y la orden
@@ -353,7 +391,7 @@ async function vigilar(id, claveVuelo) {
   //  la acción pudo haber ocurrido y repetirla a ciegas es peor que no
   //  mandarla; y si no se sabe si venció, se dice hasta cuándo puede
   //  ejecutarse todavía.
-  const vencida = vence && Date.now() > vence.getTime();
+  const vencida = vence && ahoraServidor() > vence.getTime();
   aviso(ultimo === "entregado"
         ? "El equipo la recibió pero no dijo qué pasó. Pudo haberse " +
           "ejecutado: verificá la sala antes de repetir."
@@ -364,7 +402,7 @@ async function vigilar(id, claveVuelo) {
           //  `hhmm`, 24 h y sin depender del idioma del teléfono: con
           //  toLocaleTimeString un teléfono en inglés daba «3:45:» sin
           //  AM/PM (revisor, 2026-10-11).
-          (vence ? hhmm(vence) : "—") +
+          (vence ? hhmm(new Date(vence.getTime() - (desfase || 0))) : "—") +
           ": esperá antes de repetirla.", "err");
   pintarTodo();
 }
@@ -552,6 +590,25 @@ function dialogo(o) {
 //  del propietario: ESTADO-Y-PROXIMOS-PASOS.md §2.8. Auditoría de
 //  interfaz, 2026-09-25.
 async function reconocerSeguridad() {
+  //  C-29 (decisión del propietario, 2026-10-14): varias inyecciones sin
+  //  efecto son una sospecha de FUGA, y eso se reconoce frente al tablero.
+  //  El equipo lo rechaza desde lejos; se dice antes de mandar.
+  const co2 = (ultimoEstado && ultimoEstado.d && ultimoEstado.d.co2) || {};
+  //  `sospecha_fuga` lo publica el equipo desde la C-29; el texto queda
+  //  para un controlador anterior.
+  if (co2.sospecha_fuga === true || String(co2.estado || "").indexOf("ENCLAVADO") === 0) {
+    await dialogo({
+      titulo: "Se reconoce en el tablero",
+      texto: "Varias inyecciones seguidas no subieron el CO₂: puede haber una " +
+             "fuga, la sala mal sellada o un sensor equivocado. Eso se revisa " +
+             "en persona y se reconoce en la pantalla del tablero (o la consola " +
+             "del equipo), no desde el teléfono. Hasta entonces el equipo no " +
+             "inyecta, aunque se corte la luz.",
+      aceptar: "Entendido",
+      soloAceptar: true,
+    });
+    return false;
+  }
   const ok = await dialogo({
     titulo: "Rearmar la inyección de CO₂",
     texto: "El equipo se enganchó por seguridad (puerta, parada de " +
@@ -755,10 +812,10 @@ function pintarInicio(d, cuando) {
     tit = "CORTE DE VÁLVULA NO CONFIRMADO";
     sub = "El equipo no sabe en qué posición quedó la válvula de CO₂: " +
           "puede estar abierta. Verificarla físicamente.";
-  } else if (coEst.indexOf("ENCLAVADO") === 0) {
+  } else if ((d.co2 && d.co2.sospecha_fuga === true) || coEst.indexOf("ENCLAVADO") === 0) {
     tit = "INYECCIONES SIN EFECTO";
     sub = "No subieron el CO₂: fuga, sala mal sellada o sensor equivocado. " +
-          "Enclavado hasta reconocer.";
+          "Enclavado hasta reconocerlo en el tablero.";
   } else if (sg.parada) {
     tit = "PARADA DE EMERGENCIA ACCIONADA";
     sub = "La inyección está cortada. Rearmar en el tablero.";
@@ -991,7 +1048,7 @@ function pintarPuestaEnMarcha(d, viejo) {
   const salidas = d.salidas || [];
   const hayEquipos = salidas.some(o => o.tipo);
   pasos.push({ txt: "Configurar equipos y salidas", hecho: hayEquipos,
-               accion: "mas", sub: "equipos" });
+               accion: "control", sub: "equipos" });
 
   const c = ultimaConfig || {};
   const P = window.PAR;
@@ -1100,6 +1157,10 @@ const CATEGORIAS = [
   { id: "co2",   nombre: "CO₂",   desc: "Objetivo, ventana e inyección" },
   { id: "riego", nombre: "Riego", desc: "Pulsos y sustrato" },
   { id: "luz",   nombre: "Luz",   desc: "Fotoperiodo y espectro" },
+  //  Plan de Codex (2026-10-13): «Equipos pasa a Control > Equipos». Va
+  //  ÚLTIMA: su detalle es la sección fija de los relés (#mas-equipos, en
+  //  index.html), que queda justo debajo de esta tarjeta.
+  { id: "equipos", nombre: "Equipos", desc: "Qué maneja cada relé, encenderlo 10 minutos y fuera de servicio" },
 ];
 
 let categoriaAbierta = null;   // acordeón: una sola a la vez
@@ -1259,12 +1320,23 @@ function resumenCategoria(cat) {
                        String(m % 60).padStart(2, "0");
     return hhmm(c[P.LUZ_ON_MIN] || 0) + "–" + hhmm(c[P.LUZ_OFF_MIN] || 0);
   }
+  if (cat === "equipos") {
+    const sal = (ultimoEstado && ultimoEstado.d && ultimoEstado.d.salidas) || [];
+    const asignados = sal.filter(o => o && o.tipo);
+    if (!asignados.length) return "Ningún relé con equipo asignado";
+    const prendidos = asignados.filter(o => o.real).length;
+    return asignados.length + (asignados.length === 1 ? " equipo" : " equipos") + " · " +
+           prendidos + (prendidos === 1 ? " encendido" : " encendidos");
+  }
   return "";
 }
 
 function pintarControl() {
   const host = $("d-control");
   host.innerHTML = "";
+  //  La sección fija de los relés se ve sólo con Equipos abierta (y con
+  //  Control a la vista: la apaga `pestana` al salir).
+  ver($("mas-equipos"), destinoActual === "control" && categoriaAbierta === "equipos");
 
   if (!ultimaConfig) {
     host.appendChild(_p("sub", "Esperando la configuración del equipo…"));
@@ -1280,7 +1352,7 @@ function pintarControl() {
   }
 
   //  Agrupa cada id no-instalación en su categoría.
-  const porCategoria = { clima: [], co2: [], riego: [], luz: [] };
+  const porCategoria = { clima: [], co2: [], riego: [], luz: [], equipos: [] };
   Object.keys(window.PARAMETROS).forEach(k => {
     const id = +k;
     if (ultimaConfig[id] === undefined) return;
@@ -1301,9 +1373,15 @@ function pintarControl() {
     b.querySelector(".tc-nombre").textContent = nombre;
     b.querySelector(".tc-resumen").textContent = resumenCategoria(id);
     b.querySelector(".tc-flecha").textContent = abierta ? "▲" : "▼ Ajustar";
-    b.onclick = () => { categoriaAbierta = abierta ? null : id; pintarControl(); };
+    b.onclick = () => {
+      categoriaAbierta = abierta ? null : id;
+      pintarControl();
+      if (categoriaAbierta === "equipos") pintarEquiposPanel();
+    };
     host.appendChild(b);
 
+    //  Equipos no tiene detalle acá: es la sección fija de los relés.
+    if (abierta && id === "equipos") return;
     if (abierta) {
       const det = document.createElement("div");
       det.className = "detalle-control";
@@ -1547,11 +1625,17 @@ function pintarMasInstalacion() {
   host.appendChild(c);
 }
 
+//  ── Sala y controlador: la «Configuración» del EQUIPO (C-26, E4) ──
+//  Pedido del propietario (2026-10-13): un lugar con lo del equipo
+//  —nombre, controlador, red, hora— y el botón de actualizar, «igual que
+//  en la app de LuxHort, para que el cliente pueda actualizar su equipo».
+//  Lo del cultivo sigue en Control. Actualizan Dueño y Operador; lectura
+//  mira las versiones y sabe por qué no puede.
 function pintarMasConexion() {
   const host = $("mas-conexion");
   host.innerHTML = "";
   const h = document.createElement("h2");
-  h.textContent = "Sala y conexión";
+  h.textContent = "Sala y controlador";
   host.appendChild(h);
   host.appendChild(_p("sub", "Nombre: " + (equipoActual ? equipoActual.nombre : "—") +
     (equipoActual && equipoActual.serie ? " · controlador " + equipoActual.serie : "")));
@@ -1575,12 +1659,140 @@ function pintarMasConexion() {
     c.appendChild(filaControl(id));
     host.appendChild(c);
   }
+  host.appendChild(tarjetaActualizaciones());
+}
+
+//  Las versiones de las dos puntas y qué hacer con ellas. El equipo las
+//  publica en su estado (`ota`: c, inst, disp, est, prog, msg, notas,
+//  prueba); la orden va por la cola de siempre (`mandar`), y el equipo
+//  aplica sus propias reglas: el controlador se reinicia sólo cuando no hay
+//  purga, emergencia, inyección ni riego, y una por vez.
+//  Tras un pedido aceptado, el botón de ese componente queda apagado un
+//  rato: el estado publicado puede decir DISPONIBLE unos segundos más, y un
+//  segundo toque sólo traería un «no se aplicó» (revisor de la E4).
+const otaPedidoHasta = {};
+const OTA_RESPIRO_MS = 20000;
+
+function tarjetaActualizaciones() {
+  const c = tarjeta("Versiones y actualizaciones");
+  const ota = (ultimoEstado && ultimoEstado.d.ota) || null;
+  //  Forma esperada o nada: una respuesta rara del equipo no tira abajo la
+  //  pestaña (revisor de la E4).
+  if (!Array.isArray(ota) || !ota.length) {
+    c.appendChild(_p("sub", "Este controlador todavía no informa sus versiones: " +
+      "se actualiza por cable hasta tener la 0.2.0 o posterior."));
+    return c;
+  }
+  //  Con el equipo callado, lo que se ve es de hace rato: se dice, y no se
+  //  ofrece actualizar sobre un estado que quizá ya no es cierto.
+  const edad = edadSegundos(ultimoEstado.cuando);
+  const viejo = edad === null || edad > VIEJO_S;
+  if (viejo) {
+    c.appendChild(_p("sub warn", "Información de " + (edad === null ? "hace un rato"
+      : haceCuanto(edad)) + ": el equipo no está publicando, puede haber cambiado."));
+  }
+  const NOMBRE = { controlador: "Controlador", pantalla: "Pantalla del tablero" };
+  ota.forEach(o => {
+    if (!o || typeof o !== "object") return;
+    const comp = o.c === "pantalla" ? 1 : 0;
+    const bloque = document.createElement("div");
+    bloque.className = "ota-comp";
+    const t = document.createElement("h3");
+    t.textContent = NOMBRE[o.c] || String(o.c);
+    bloque.appendChild(t);
+    bloque.appendChild(_p("sub", "Corre la versión " + (o.inst || "—") +
+      (o.prueba ? " · a prueba: se confirma sola en unos minutos" : "")));
+    const enCurso = o.est === OTA.DESCARGANDO || o.est === OTA.ENVIANDO;
+    let estado = typeof TEXTO_OTA[o.est] === "string" ? TEXTO_OTA[o.est] : "—";
+    estado = estado.charAt(0).toUpperCase() + estado.slice(1);
+    if (o.est === OTA.DISPONIBLE && o.disp) estado = "Hay una versión nueva: " + o.disp;
+    if (enCurso) estado += " " + (o.prog | 0) + " %";
+    const pe = _p("ota-estado " + (o.est === OTA.ERROR ? "err"
+                 : o.est === OTA.AL_DIA ? "ok"
+                 : (o.est === OTA.DISPONIBLE || o.est === OTA.A_PRUEBA ||
+                    o.est === OTA.ESPERANDO) ? "warn" : ""), estado);
+    pe.setAttribute("role", "status");
+    bloque.appendChild(pe);
+    if (enCurso) {
+      const barra = document.createElement("progress");
+      barra.max = 100;
+      barra.value = o.prog | 0;
+      barra.setAttribute("aria-label", "avance de " + (NOMBRE[o.c] || o.c));
+      bloque.appendChild(barra);
+    }
+    //  Con una disponible, qué trae; si no, el motivo que dio el equipo.
+    const texto = o.est === OTA.DISPONIBLE && o.notas ? o.notas : (o.msg || "");
+    if (texto) bloque.appendChild(_p("sub", texto));
+    if (o.est === OTA.DISPONIBLE) {
+      const b = document.createElement("button");
+      b.className = "pri";
+      b.textContent = comp === 0 ? "Actualizar el controlador" : "Actualizar la pantalla";
+      const clave = "ota" + comp;
+      b.disabled = !puedeOperar() || viejo || enVuelo.has(clave) ||
+                   Date.now() < (otaPedidoHasta[comp] || 0);
+      b.onclick = () => pedirActualizacion(comp, o.disp || "");
+      bloque.appendChild(b);
+    }
+    c.appendChild(bloque);
+  });
+  const buscar = document.createElement("button");
+  buscar.textContent = "Buscar actualizaciones";
+  buscar.disabled = !puedeOperar() || enVuelo.has("ota-buscar");
+  buscar.onclick = () => {
+    if (!puedeOperar()) return;   // el servidor igual lo rechaza: defensa doble
+    mandar(CMD.OTA_BUSCAR, 0, 0, "ota-buscar",
+           "el pedido de buscar actualizaciones (el resultado aparece acá)");
+  };
+  c.appendChild(buscar);
+  c.appendChild(_p("sub", puedeOperar()
+    ? "Nada se instala solo: se elige acá o en la pantalla del tablero. Cada " +
+      "versión llega firmada por el fabricante y el equipo la verifica antes de " +
+      "instalarla."
+    : "Tu rol en esta sala es de lectura: ves las versiones, pero actualizar " +
+      "lo hacen el dueño o un operador."));
+  return c;
+}
+
+//  Lo que va a pasar, en palabras, ANTES de que pase: el mismo texto que
+//  la pantalla del tablero (docs/ACTUALIZACIONES.md).
+async function pedirActualizacion(comp, version) {
+  if (!puedeOperar()) return;   // el servidor igual lo rechaza: defensa doble
+  const ok = await dialogo(comp === 0 ? {
+    titulo: "Actualizar el controlador a la " + version,
+    texto: "Se descarga, se verifica (firma del fabricante) y el controlador " +
+           "se reinicia solo cuando no hay purga, emergencia, inyección ni " +
+           "riego. Durante el reinicio el control se detiene unos segundos. " +
+           "Arranca a prueba: si no anda, vuelve sola a la versión anterior. " +
+           "La configuración se conserva.",
+    aceptar: "Actualizar",
+  } : {
+    titulo: "Actualizar la pantalla a la " + version,
+    texto: "Se descarga y el controlador se la pasa a la pantalla por el " +
+           "cable: unos 25 minutos, con la sala controlada y la pantalla " +
+           "andando. Después la pantalla se verifica, se instala y se " +
+           "reinicia sola; arranca a prueba y, si no anda, vuelve sola a la " +
+           "anterior.",
+    aceptar: "Actualizar",
+  });
+  if (!ok) return;
+  otaPedidoHasta[comp] = Date.now() + OTA_RESPIRO_MS;
+  //  «Aplicado» en una orden de actualizar quiere decir que el equipo tomó
+  //  el PEDIDO, no que ya se actualizó (revisor de la E4): se dice así.
+  mandar(CMD.OTA_ACTUALIZAR, comp, 0, "ota" + comp,
+         comp === 0 ? "el pedido de actualizar el controlador (el avance se ve acá)"
+                    : "el pedido de actualizar la pantalla (el avance se ve acá)");
 }
 
 //  ── Los relés ──
 function pintarEquiposPanel() {
   const host = $("reles");
-  if (!ultimoEstado) return;
+  //  Sin estado se VACÍA: lo pintado puede ser de otra sala (revisor). Lo
+  //  mismo lo que se repinta al final de esta función.
+  if (!ultimoEstado) {
+    host.innerHTML = "";
+    ["mas-conexion", "mas-instalacion"].forEach(id => { const n = $(id); if (n) n.innerHTML = ""; });
+    return;
+  }
   host.innerHTML = "";
   const sal = (ultimoEstado.d.salidas || []);
   if (!sal.length) {
@@ -1958,7 +2170,12 @@ let histFilas = null;
 //  última (lo encontró la prueba, sección 18). Una vuelta de más por
 //  consulta es el precio de no suponer. Auditoría de interfaz, 2026-09-25.
 const HIST_PAGINA = 1000;
-const HIST_TOPE = 3000;   // tres días a un punto por minuto: nunca debería llegar
+//  Siete días a un punto por minuto son 10.080 (plan de Codex, «[24 h]
+//  [7 días]»): el tope los cubre con margen.
+const HIST_TOPE = 10500;
+//  El período a la vista, en horas, y si se ve como tabla.
+let histHoras = 24;
+let histTabla = false;
 async function leerHistorial(equipoId, desde) {
   const filas = [];
   for (let vuelta = 0; vuelta < 20 && filas.length < HIST_TOPE; vuelta++) {
@@ -1974,11 +2191,33 @@ async function leerHistorial(equipoId, desde) {
   return { data: filas };
 }
 
+//  Cada pedido de historial lleva su número: la respuesta de uno viejo
+//  —otro período, otra sala— no se pinta (revisor del rediseño: con siete
+//  días son ~11 pedidos seguidos, y el gráfico de A quedaba bajo el nombre
+//  de B, o 7 días con el botón en 24 h).
+let histSeq = 0;
+
 async function pintarHistorial() {
+  //  Sin sala abierta no hay qué pedir (lo encontró tools/vitrina_app.py,
+  //  2026-10-14: `equipoActual.id` reventaba).
+  if (!equipoActual) return;
+  const mi = ++histSeq, eq = equipoActual;
   const host = $("grafico");
-  host.innerHTML = '<p class="sub">Buscando…</p>';
-  const desde = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
-  const { data, error } = await leerHistorial(equipoActual.id, desde);
+  //  Lo de antes se borra al entrar: un «Descargar CSV» de la sala o el
+  //  período anterior no puede quedar a mano mientras se busca.
+  histFilas = null;
+  $("hist-vars").innerHTML = "";
+  $("hist-exportar").innerHTML = "";
+  pintarPeriodoHist();
+  host.innerHTML = histHoras > 24
+    ? '<p class="sub">Buscando los últimos siete días…</p>'
+    : '<p class="sub">Buscando…</p>';
+  const desde = new Date(Date.now() - histHoras * 3600 * 1000).toISOString();
+  let res;
+  try { res = await leerHistorial(eq.id, desde); }
+  catch (e) { res = { error: e }; }   // antes quedaba «Buscando…» para siempre
+  if (mi !== histSeq || equipoActual !== eq) return;
+  const { data, error } = res;
   if (error) {
     //  El mensaje va por `textContent`, no concatenado en `innerHTML`.
     //  Un texto de error puede reflejar parte de lo que se pidio, y
@@ -1997,8 +2236,176 @@ async function pintarHistorial() {
   }
   histFilas = data;
   pintarSelectorHistVars(data);
-  dibujarCurvas(host, data);
+  dibujarHist(host);
   pintarExportarHist();
+  //  Un punto por minuto no llega al tope en siete días; si llega, se
+  //  dice: lo que se corta es lo MÁS NUEVO (el pedido va en orden).
+  if (data.length >= HIST_TOPE)
+    host.appendChild(_p("sub warn", "Hay más datos de los que se muestran: se cortó en " +
+                                    HIST_TOPE + " puntos."));
+}
+
+//  El gráfico o la tabla, según lo elegido. Para DIBUJAR siete días se
+//  resumen (ver `resumirFilas`); la tabla y el CSV usan las filas crudas.
+function dibujarHist(host) {
+  if (histTabla) { pintarTablaHist(host, histFilas); return; }
+  const W = Math.max(300, Math.round(host.clientWidth || 860));
+  dibujarCurvas(host, resumirFilas(histFilas, 2 * W));
+}
+
+function pintarPeriodoHist() {
+  const host = $("hist-periodo");
+  if (!host) return;
+  host.innerHTML = "";
+  [[24, "24 h"], [168, "7 días"]].forEach(([h, txt]) => {
+    const b = document.createElement("button");
+    b.textContent = txt;
+    b.setAttribute("aria-pressed", histHoras === h ? "true" : "false");
+    b.onclick = () => { if (histHoras !== h) { histHoras = h; pintarHistorial(); } };
+    host.appendChild(b);
+  });
+  //  La tabla es otra forma de ver lo mismo (plan de Codex: «cada gráfico
+  //  tiene tabla/alternativa textual»): con lector de pantalla, o para
+  //  leer un valor exacto sin apuntar con el dedo.
+  const tb = document.createElement("button");
+  tb.textContent = "Tabla";
+  tb.setAttribute("aria-pressed", histTabla ? "true" : "false");
+  tb.onclick = () => { histTabla = !histTabla; pintarPeriodoHist(); redibujarHist(); };
+  host.appendChild(tb);
+}
+
+//  Para dibujar, no para guardar: más puntos que píxeles no se ven y
+//  vuelven lento el teléfono. Cada tramo se dibuja con su MÍNIMO y su
+//  MÁXIMO —dos puntos, en ese orden—, no con el promedio: el promedio
+//  aplastaba los picos, y un exceso de CO₂ de tres minutos salía a la
+//  mitad, o como «estable» (revisor del rediseño). Sin las mediciones
+//  inválidas; un tramo sin ninguna válida queda como hueco (null). Un
+//  tramo NUNCA cruza un hueco de tiempo (más de 5 minutos sin filas): se
+//  corta ahí, así el mínimo y el máximo quedan en horas que existieron y
+//  el gráfico sigue viendo el salto. La tabla y el CSV usan las filas
+//  crudas.
+const CAMPOS_HIST = ["temp_c10", "hum_pct10", "co2_ppm", "vpd_centi", "suelo_pct10"];
+const TRAMO_CORTE_MS = 5 * 60000;
+function resumirFilas(filas, maxPuntos) {
+  if (!filas || filas.length <= maxPuntos) return filas;
+  const k = Math.ceil(filas.length / Math.max(1, Math.floor(maxPuntos / 2)));
+  const out = [];
+  let tramo = [];
+  const volcar = () => {
+    const bajo = { momento: tramo[0].momento, medicion_ok: true };
+    const alto = { momento: tramo[tramo.length - 1].momento, medicion_ok: true };
+    CAMPOS_HIST.forEach(c => {
+      const delAire = c !== "suelo_pct10";
+      const vals = tramo.filter(f => !(delAire && f.medicion_ok === false))
+                        .map(f => f[c]).filter(v => v !== null && v !== undefined);
+      bajo[c] = vals.length ? Math.min(...vals) : null;
+      alto[c] = vals.length ? Math.max(...vals) : null;
+    });
+    out.push(bajo);
+    if (tramo.length > 1) out.push(alto);
+    tramo = [];
+  };
+  for (let i = 0; i < filas.length; i++) {
+    if (tramo.length && (tramo.length >= k ||
+        Date.parse(filas[i].momento) - Date.parse(tramo[tramo.length - 1].momento) > TRAMO_CORTE_MS))
+      volcar();
+    tramo.push(filas[i]);
+  }
+  if (tramo.length) volcar();
+  return out;
+}
+
+const DIAS_SEM = ["dom", "lun", "mar", "mié", "jue", "vie", "sáb"];
+function diaCorto(ms) {
+  const d = new Date(ms);
+  return DIAS_SEM[d.getDay()] + " " + d.getDate() + "/" + (d.getMonth() + 1);
+}
+
+//  Una fila por hora (24 h) o por día (7 días): mínimo, promedio y máximo
+//  de la variable elegida, y cuántas mediciones válidas hubo. Comparando,
+//  el promedio de cada variable. Sólo mediciones válidas.
+function filasTablaHist(filas, horas, vars) {
+  const porDia = horas > 48;
+  const grupos = new Map();
+  filas.forEach(f => {
+    const d = new Date(f.momento);
+    const k = porDia ? new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+                     : new Date(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours()).getTime();
+    if (!grupos.has(k)) grupos.set(k, []);
+    grupos.get(k).push(f);
+  });
+  const out = [];
+  [...grupos.keys()].sort((a, b) => a - b).forEach(k => {
+    const g = grupos.get(k);
+    const fila = { desde: k, porDia, vars: {} };
+    vars.forEach(([id, , campo, , , delAire]) => {
+      const vals = g.filter(f => !(delAire && f.medicion_ok === false))
+                    .map(f => f[campo]).filter(v => v !== null && v !== undefined);
+      fila.vars[id] = vals.length
+        ? { min: Math.min(...vals), max: Math.max(...vals),
+            prom: vals.reduce((a, b) => a + b, 0) / vals.length, n: vals.length }
+        : null;
+    });
+    out.push(fila);
+  });
+  return out;
+}
+
+function pintarTablaHist(host, filas) {
+  host.innerHTML = "";
+  if (!filas || !filas.length) return;
+  const vars = histComparar ? VARIABLES_HIST.filter(([, , campo]) =>
+                 filas.some(f => f[campo] !== null && f[campo] !== undefined))
+             : VARIABLES_HIST.filter(([id]) => id === histVarActiva);
+  const datos = filasTablaHist(filas, histHoras, vars);
+  const env = document.createElement("div");
+  env.className = "tabla-envoltura";
+  const tabla = document.createElement("table");
+  tabla.className = "tabla-hist";
+  const cap = document.createElement("caption");
+  cap.textContent = (histComparar ? "Promedio de cada variable" : vars[0] ? vars[0][1] : "") +
+    (datos.length && datos[0].porDia ? ", por día" : ", por hora") +
+    " (sólo mediciones válidas)";
+  tabla.appendChild(cap);
+  const th = (fila, txt, clase) => { const c = document.createElement("th");
+    c.setAttribute("scope", "col"); c.textContent = txt;
+    if (clase) c.className = clase; fila.appendChild(c); };
+  const td = (fila, txt, clase) => { const c = document.createElement("td");
+    c.textContent = txt; if (clase) c.className = clase; fila.appendChild(c); };
+  const cab = document.createElement("tr");
+  th(cab, datos.length && datos[0].porDia ? "Día" : "Hora");
+  if (histComparar) vars.forEach(([, nombre]) => th(cab, nombre));
+  else {
+    ["Mínimo", "Promedio", "Máximo"].forEach(x => th(cab, x));
+    //  «Mediciones» se esconde en el teléfono (index.html, .col-n): es la
+    //  que menos se necesita y la que obligaba a desplazar la tabla.
+    th(cab, "Mediciones", "col-n");
+  }
+  const thead = document.createElement("thead");
+  thead.appendChild(cab);
+  tabla.appendChild(thead);
+  const tbody = document.createElement("tbody");
+  datos.forEach(f => {
+    const tr = document.createElement("tr");
+    td(tr, f.porDia ? diaCorto(f.desde)
+                    : hhmm(new Date(f.desde)) + "–" + hhmm(new Date(f.desde + 3600000)));
+    if (histComparar) {
+      vars.forEach(([id, , , , fmt]) => td(tr, f.vars[id] ? fmt(Math.round(f.vars[id].prom)) : "—"));
+    } else {
+      const [id, , , , fmt] = vars[0];
+      const v = f.vars[id];
+      td(tr, v ? fmt(v.min) : "—");
+      //  Redondeado a la unidad en que se guarda (ppm, décimas de grado):
+      //  «499.0901639 ppm» no le dice nada a nadie.
+      td(tr, v ? fmt(Math.round(v.prom)) : "—");
+      td(tr, v ? fmt(v.max) : "—");
+      td(tr, v ? String(v.n) : "0", "col-n");
+    }
+    tbody.appendChild(tr);
+  });
+  tabla.appendChild(tbody);
+  env.appendChild(tabla);
+  host.appendChild(env);
 }
 
 //  ── Exportar a CSV (C2) ──
@@ -2082,7 +2489,7 @@ function pintarSelectorHistVars(filas) {
 function redibujarHist() {
   if (!histFilas) return;
   pintarSelectorHistVars(histFilas);
-  dibujarCurvas($("grafico"), histFilas);
+  dibujarHist($("grafico"));
 }
 
 const EJE_ALTO = 34;
@@ -2134,7 +2541,9 @@ function dibujarCurvas(host, filas, comparar = histComparar) {
   const HUECO_MS = Math.max(5 * 60000, 3 * pasoTipico);
 
   // ── El eje de tiempo ──
-  const marcas = [0, 0.25, 0.5, 0.75, 1];
+  //  Con fechas («mié 14/10») y un teléfono angosto, cinco marcas se pisan:
+  //  van tres (lo encontró la vitrina, 2026-10-14).
+  const marcas = (span > 36 * 3600000 && W < 560) ? [0, 0.5, 1] : [0, 0.25, 0.5, 0.75, 1];
   marcas.forEach((fr, n) => {
     const tm = t0 + fr * span;
     const x = equisT(tm);
@@ -2152,7 +2561,7 @@ function dibujarCurvas(host, filas, comparar = histComparar) {
                                 : n === marcas.length - 1 ? "end" : "middle");
     t.setAttribute("fill", "#8aa294");
     t.setAttribute("font-size", "13");
-    t.textContent = hhmm(new Date(tm));
+    t.textContent = span > 36 * 3600000 ? diaCorto(tm) : hhmm(new Date(tm));
     svg.appendChild(t);
   });
 
@@ -2258,7 +2667,9 @@ function dibujarCurvas(host, filas, comparar = histComparar) {
       const v = valorDe(filas[i], s.campo, s.delAire);
       return s.nombre + " " + (v === null || v === undefined ? "—" : s.fmt(v));
     });
-    detalle.textContent = hhmm(filas[i].momento) + " · " + partes.join("  ·  ");
+    const cuando = span > 36 * 3600000
+      ? diaCorto(tiempos[i]) + " " + hhmm(filas[i].momento) : hhmm(filas[i].momento);
+    detalle.textContent = cuando + " · " + partes.join("  ·  ");
   };
   const alSalir = () => {
     cursor.setAttribute("opacity", "0");
@@ -2270,10 +2681,12 @@ function dibujarCurvas(host, filas, comparar = histComparar) {
     svg.addEventListener("pointerleave", alSalir);
   }
 
+  const largo = span > 36 * 3600000;
+  const fmtExt = f => largo ? diaCorto(Date.parse(f.momento)) + " " + hhmm(f.momento)
+                            : hhmm(f.momento);
   svg.setAttribute("aria-label",
-    "Curvas de las ultimas 24 horas, de " + hhmm(filas[0].momento) + " a " +
-    hhmm(filas[filas.length - 1].momento) +
-    ". Los valores estan en la leyenda de abajo.");
+    "Curvas de " + fmtExt(filas[0]) + " a " + fmtExt(filas[filas.length - 1]) +
+    ". Los valores estan en la leyenda de abajo, y en la tabla (botón «Tabla»).");
   host.appendChild(svg);
   host.appendChild(detalle);
   host.appendChild(leyenda);
@@ -2284,7 +2697,10 @@ function dibujarCurvas(host, filas, comparar = histComparar) {
   nota.textContent = "El eje vertical no tiene unidad: cada curva usa su propia " +
     "escala para ocupar todo el alto. Lo que se compara es la forma, no la " +
     "altura. Las horas son las de este dispositivo (" +
-    Intl.DateTimeFormat().resolvedOptions().timeZone + ").";
+    Intl.DateTimeFormat().resolvedOptions().timeZone + ")." +
+    (histFilas && filas.length < histFilas.length
+      ? " Con más mediciones que espacio, cada tramo se dibuja con su mínimo y " +
+        "su máximo; la tabla y el CSV tienen todos los datos." : "");
   host.appendChild(nota);
 }
 
@@ -2344,8 +2760,43 @@ async function refrescar() {
   pintarTodo();
 }
 
-async function abrirSala(eq) {
+//  Los cuatro destinos, para validar lo que venga en la dirección.
+const DESTINOS = ["inicio", "control", "hist", "mas"];
+
+//  La dirección recuerda la sala y la sección (plan de Codex: «mantener
+//  URL/estado de navegación al recargar o compartir»): #sala=…&ver=….
+//  `replaceState`, no `pushState`: cada toque de la barra no llena el
+//  «atrás» del teléfono. Sin datos de la sala, sólo su id (que la base
+//  igual no muestra a quien no es miembro).
+function recordarUbicacion() {
+  if (!equipoActual || typeof history === "undefined" || !history.replaceState ||
+      typeof location === "undefined") return;
+  const h = "#sala=" + encodeURIComponent(equipoActual.id) + "&ver=" + destinoActual;
+  if (location.hash !== h) history.replaceState(null, "", h);
+}
+
+async function abrirSala(eq, destino) {
   equipoActual = eq;
+  //  Lo de la sala anterior se borra ANTES de esperar nada (revisor del
+  //  rediseño). Con el selector, la sala no pasa por la lista: quedaban
+  //  las mediciones, la franja de PURGA o los relés de A bajo el nombre de
+  //  B hasta el primer dato —y un «10 min» habría salido con el relé de A
+  //  hacia B—. Sin dato, se dice «sin contacto», nunca «todo normal».
+  ultimoEstado = null;
+  ultimaConfig = null;
+  histFilas = null;
+  histSeq++;
+  histHoras = 24;
+  histTabla = false;
+  errorRed = false;
+  pintarInicio({}, null);
+  //  También «Sala y controlador» (con el botón de actualizar) e
+  //  «Instalación»: se repintan sólo con estado, y mientras tanto mandarían
+  //  órdenes de la sala anterior a la nueva (revisor, segunda pasada).
+  ["d-control", "reles", "grafico", "hist-vars", "hist-exportar", "hist-periodo",
+   "mas-conexion", "mas-instalacion"]
+    .forEach(id => { const n = $(id); if (n) n.innerHTML = ""; });
+  ver($("btn-mas-instalacion"), false);
   ver($("equipos"), false);
   ver($("sala"), true);
   document.body.classList.add("con-navinf");
@@ -2355,15 +2806,19 @@ async function abrirSala(eq) {
   //  anterior mostraría, por un instante, controles que esta persona no
   //  puede usar acá — y ese instante alcanza para que alguien toque.
   rolActual = null;
-  const { data } = await sb.from("miembros")
-    .select("rol").eq("equipo_id", eq.id).maybeSingle();
+  let data = null;
+  try {
+    ({ data } = await sb.from("miembros")
+      .select("rol").eq("equipo_id", eq.id).maybeSingle());
+  } catch (e) { data = null; }
+  if (equipoActual !== eq) return;   // ya se cambió a otra mientras tanto
   //  Sin respuesta se asume lo MENOS permisivo. Al revés, un error de
   //  red dejaría la instalación abierta.
   rolActual = (data && data.rol) || "lectura";
 
   categoriaAbierta = null;
   destinoActual = "inicio";
-  pestana("inicio");
+  pestana(DESTINOS.indexOf(destino) >= 0 ? destino : "inicio");
   //  «Más» recuerda su última sub-sección abierta (conexion/equipos/
   //  gente/instalacion/cuenta) entre una sala y la siguiente, porque
   //  vive en el DOM y nadie la vuelve a ocultar al cambiar de sala. Sin
@@ -2401,6 +2856,8 @@ if (typeof window !== "undefined" && window.addEventListener) {
 function cerrarSala() {
   clearInterval(timer);
   timer = null;
+  histSeq++;
+  if (typeof cerrarSelectorSala === "function") cerrarSelectorSala();
   //  Las órdenes en vuelo son de ESTA sala: sus claves («rele1»,
   //  «ack-alarmas») se repiten en la próxima, que mostraría como
   //  «esperando» un control que no pidió nada (revisor, 2026-10-11).
@@ -2410,6 +2867,10 @@ function cerrarSala() {
   equipoActual = null;
   ultimoEstado = null;
   ultimaConfig = null;
+  //  Fuera de la sala, la dirección no la nombra.
+  if (typeof history !== "undefined" && history.replaceState &&
+      typeof location !== "undefined" && location.hash)
+    history.replaceState(null, "", location.pathname + location.search);
   ver($("sala"), false);
   ver($("equipos"), true);
 }
@@ -2428,6 +2889,16 @@ function pestana(cual, sub) {
     const btn = $("btn-mas-" + sub);
     if (btn) btn.click();
   }
+  //  Control → una categoría (la puesta en marcha y «Ver equipos» llevan a
+  //  Equipos). Sin `sub`, queda la que estaba.
+  if (cual === "control" && sub) {
+    categoriaAbierta = sub;
+    pintarControl();
+    if (sub === "equipos") pintarEquiposPanel();
+  }
+  //  La sección de los relés vive fuera de #d-control: se esconde al salir.
+  ver($("mas-equipos"), cual === "control" && categoriaAbierta === "equipos");
+  recordarUbicacion();
 }
 
 window.LuxApp = { init(cliente) { sb = cliente; }, abrirSala, cerrarSala,

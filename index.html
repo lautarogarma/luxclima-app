@@ -89,8 +89,21 @@ button.chico.marcado{background:var(--atencion);color:var(--sobreClaro);
                  padding:2px 0}
 #btn-volver-salas{width:auto;min-height:40px;padding:6px 12px;font-size:14px;
                   background:none;border:1px solid var(--linea);flex:0 0 auto}
-#encabezado-sala b{flex:1;font-size:17px;overflow:hidden;text-overflow:ellipsis;
-                   white-space:nowrap}
+/* El nombre de la sala es un botón: con más de una sala abre el selector
+   (plan de Codex, «[Nombre de sala ▾]»). Con una sola se lee como título. */
+#sala-nombre{flex:1;min-width:0;width:auto;min-height:44px;padding:4px 6px;
+             background:none;border:none;text-align:left;font-size:17px;
+             font-weight:700;color:var(--texto);overflow:hidden;
+             text-overflow:ellipsis;white-space:nowrap;cursor:default}
+#sala-nombre.varias{cursor:pointer}
+#sala-nombre.varias::after{content:" ▾";color:var(--tenue);font-weight:400}
+#sala-nombre.varias:hover{color:var(--marca)}
+/* El selector: filas de selección única, la actual marcada con texto. */
+.lista-salas{display:flex;flex-direction:column;gap:6px;margin:10px 0}
+.lista-salas button{text-align:left;display:flex;justify-content:space-between;
+                    align-items:center;gap:10px}
+.lista-salas button[aria-current="true"]{border-color:var(--ok);font-weight:600}
+.lista-salas .marca-actual{font-size:13px;color:var(--ok);font-weight:400}
 
 .renglon{display:grid;grid-template-columns:1fr auto;gap:6px 10px;
          align-items:center;padding:9px 0;border-bottom:1px solid var(--linea)}
@@ -245,6 +258,64 @@ button.valor-tocable:disabled{background:none;color:var(--texto);
 #puesta-marcha .pm-txt{display:flex;align-items:center;gap:8px;font-size:15px}
 #puesta-marcha .pm-check{color:var(--ok);font-weight:700}
 #puesta-marcha button{width:auto;padding:8px 14px;min-height:40px;font-size:14px}
+
+/* ---- Versiones y actualizaciones (C-26, E4) ---- */
+.ota-comp{padding:12px 0;border-bottom:1px solid var(--linea)}
+.ota-comp:last-of-type{border-bottom:none}
+.ota-comp h3{font-size:16px;margin:0 0 4px}
+.ota-comp .sub{margin:0 0 8px}
+.ota-estado{font-size:16px;font-weight:600;margin:0 0 8px}
+.ota-comp progress{width:100%;height:12px;margin:0 0 8px;accent-color:var(--ok)}
+.ota-comp button{margin-top:4px}
+
+/* ---- Historial: período y tabla (plan de Codex, 2026-10-14) ---- */
+#hist-periodo{display:flex;gap:6px;margin-bottom:10px}
+#hist-periodo button{width:auto;flex:0 0 auto;padding:8px 14px;min-height:40px;font-size:14px}
+#hist-periodo button[aria-pressed="true"]{background:var(--accion);color:var(--sobreClaro);
+  border-color:var(--accion);font-weight:600}
+.tabla-envoltura{overflow-x:auto;margin-top:10px}
+.tabla-hist{width:100%;border-collapse:collapse;font-size:14px;
+            font-variant-numeric:tabular-nums}
+.tabla-hist caption{text-align:left;color:var(--tenue);padding:0 0 6px}
+.tabla-hist th,.tabla-hist td{padding:7px 8px;border-bottom:1px solid var(--linea);
+                              text-align:right;white-space:nowrap}
+.tabla-hist th:first-child,.tabla-hist td:first-child{text-align:left}
+.tabla-hist th{color:var(--tenue);font-weight:600}
+@media (max-width:430px){.tabla-hist .col-n{display:none}}
+.botones-hist{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.botones-hist button{width:auto;padding:8px 14px;min-height:40px;font-size:14px}
+
+/* ---- Ayuda y seguridad ---- */
+#mas-ayuda ul{margin:0;padding-left:20px}
+#mas-ayuda li{margin:0 0 10px}
+
+/* ---- Computadora y tablet grande (plan de Codex: «no estirar la interfaz
+   móvil») ----
+   Desde 1024 px la barra de abajo pasa a ser una barra lateral fija con
+   los mismos cuatro destinos, en el mismo orden; el contenido tiene un
+   ancho máximo de 1280 px; e Inicio va en dos columnas. Debajo de 1024
+   no cambia nada: el teléfono y la tablet vertical siguen como estaban. */
+@media (min-width:1024px){
+  body.con-navinf{padding:20px 28px 28px 260px}
+  body.con-navinf > h1, body.con-navinf > #sub, #sala{max-width:1280px}
+  #navinf{top:0;bottom:0;right:auto;width:232px;flex-direction:column;
+          justify-content:flex-start;gap:4px;padding:76px 12px 16px;
+          border-top:none;border-right:1px solid var(--linea)}
+  #navinf button{flex:0 0 auto;flex-direction:row;justify-content:flex-start;
+                 gap:12px;font-size:15px;padding:10px 14px;min-height:48px}
+  #navinf button .ico{font-size:18px;width:22px;text-align:center}
+  /* Inicio: a la izquierda la sala ahora (mediciones, próximo); a la
+     derecha lo que pide atención y los equipos. El orden del documento
+     no cambia —es el de lectura y el del teclado—: sólo se reparte. */
+  #d-inicio{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);
+            grid-template-areas:"pm pm" "med ate" "pro equ";gap:0 14px;
+            align-items:start}
+  #puesta-marcha{grid-area:pm}
+  #c-medidas{grid-area:med}
+  #c-atencion{grid-area:ate}
+  #c-proximo{grid-area:pro}
+  #c-equipos{grid-area:equ}
+}
 </style>
 </head>
 <body>
@@ -293,7 +364,7 @@ button.valor-tocable:disabled{background:none;color:var(--texto);
 
   <div id="encabezado-sala">
     <button id="btn-volver-salas" title="Volver a la lista de salas">‹ Salas</button>
-    <b id="sala-nombre">—</b>
+    <button id="sala-nombre">—</button>
     <span class="pill" id="sala-edad">—</span>
   </div>
 
@@ -305,7 +376,7 @@ button.valor-tocable:disabled{background:none;color:var(--texto);
       <h2>La sala todavía no está lista</h2>
       <ol id="pm-lista"></ol>
     </section>
-    <section class="card">
+    <section class="card" id="c-medidas">
       <div class="grid" id="medidas"></div>
       <p class="sub" id="medidas-pie" style="margin:12px 0 0"></p>
     </section>
@@ -318,11 +389,11 @@ button.valor-tocable:disabled{background:none;color:var(--texto);
         <button id="btn-silenciar" class="oculto">Silenciar sirena</button>
       </div>
     </section>
-    <section class="card">
+    <section class="card" id="c-proximo">
       <h2>Próximo</h2>
       <div id="agenda"></div>
     </section>
-    <section class="card">
+    <section class="card" id="c-equipos">
       <h2>Equipos</h2>
       <div id="equipos-resumen"></div>
       <button id="btn-ver-equipos" style="margin-top:10px;width:auto;padding:8px 14px;
@@ -332,11 +403,23 @@ button.valor-tocable:disabled{background:none;color:var(--texto);
 
   <!-- ══ Control ══ -->
   <div id="d-control" class="oculto"></div>
+  <!-- Los relés: Control → Equipos (plan de Codex: «Equipos pasa a
+       Control > Equipos»). Es hermana de #d-control y no hija, porque
+       pintarControl vacía su host en cada repintada; Equipos es la última
+       categoría, así que se ve justo debajo de su tarjeta. -->
+  <section id="mas-equipos" class="card oculto">
+    <h2>Qué maneja cada relé</h2>
+    <p class="sub">Todos los equipos son opcionales: un relé puede quedar
+    libre. Qué equipo maneja cada relé se elige en la pantalla del
+    tablero, frente al equipo: desde lejos no se cambia.</p>
+    <div id="reles"></div>
+  </section>
 
   <!-- ══ Historial ══ -->
   <div id="d-hist" class="oculto">
     <section class="card">
       <h2>Historial</h2>
+      <nav id="hist-periodo" aria-label="Período"></nav>
       <nav id="hist-vars" aria-label="Variable a mostrar"></nav>
       <div id="grafico"></div>
       <div id="hist-exportar"></div>
@@ -346,20 +429,24 @@ button.valor-tocable:disabled{background:none;color:var(--texto);
   <!-- ══ Más ══ -->
   <div id="d-mas" class="oculto">
     <button class="fila-mas" id="btn-mas-conexion">
-      <span><span class="fm-nombre">Sala y conexión</span>
-      <span class="fm-sub">Nombre, controlador, red local</span></span>
-    </button>
-    <button class="fila-mas" id="btn-mas-equipos">
-      <span><span class="fm-nombre">Equipos</span>
-      <span class="fm-sub">Qué maneja cada relé, fuera de servicio</span></span>
+      <span><span class="fm-nombre">Sala y controlador</span>
+      <span class="fm-sub">Nombre, red, hora, versiones y actualizaciones</span></span>
     </button>
     <button class="fila-mas" id="btn-mas-gente">
       <span><span class="fm-nombre">Personas y permisos</span>
       <span class="fm-sub">Usuarios, roles e invitaciones</span></span>
     </button>
+    <button class="fila-mas" id="btn-mas-exportar">
+      <span><span class="fm-nombre">Exportar datos</span>
+      <span class="fm-sub">El historial en planilla (CSV), desde Historial</span></span>
+    </button>
     <button class="fila-mas oculto" id="btn-mas-instalacion">
       <span><span class="fm-nombre">Instalación y servicio</span>
       <span class="fm-sub">Cómo está armada la sala — sólo Dueño</span></span>
+    </button>
+    <button class="fila-mas" id="btn-mas-ayuda">
+      <span><span class="fm-nombre">Ayuda y seguridad</span>
+      <span class="fm-sub">Qué hacer ante una alarma, y lo que nunca se hace desde acá</span></span>
     </button>
     <button class="fila-mas" id="btn-mas-cuenta">
       <span><span class="fm-nombre">Mi cuenta</span>
@@ -367,18 +454,30 @@ button.valor-tocable:disabled{background:none;color:var(--texto);
     </button>
 
     <section id="mas-conexion" class="card oculto"></section>
-    <section id="mas-equipos" class="card oculto">
-      <h2>Qué maneja cada relé</h2>
-      <p class="sub">Todos los equipos son opcionales: un relé puede quedar
-      libre. Cambiar el equipo de un relé se aplica en el controlador con
-      las mismas verificaciones que desde la pantalla del tablero.</p>
-      <div id="reles"></div>
-    </section>
     <section id="mas-gente" class="card oculto">
       <h2>Personas y permisos</h2>
       <div id="gente-sala"></div>
     </section>
     <section id="mas-instalacion" class="card oculto"></section>
+    <section id="mas-ayuda" class="card oculto">
+      <h2>Ayuda y seguridad</h2>
+      <ul>
+        <li><b>Si dice PURGA o suena la sirena, no se entra a la sala.</b>
+          La purga saca el CO₂ y termina sola; el CO₂ no se huele ni se ve.</li>
+        <li><b>Reconocer seguridad</b> sólo con la sala revisada en persona.
+          Una sospecha de fuga (inyecciones sin efecto) se reconoce en la
+          pantalla del tablero, no desde acá.</li>
+        <li><b>La válvula de CO₂ no se abre a mano</b>, ni desde acá ni
+          desde el tablero: sólo el control la abre, con la seguridad en
+          regla.</li>
+        <li>Cada orden viaja por internet hasta el equipo, que decide y
+          contesta: <i>aplicada</i>, <i>no se aplicó</i> (con el motivo) o
+          <i>indeterminada</i> (la tomó y no dijo qué pasó: verificá la sala
+          antes de repetirla).</li>
+        <li>El manual del usuario y el de seguridad los tiene quien instaló
+          la sala.</li>
+      </ul>
+    </section>
     <section id="mas-cuenta" class="card oculto">
       <h2>Mi cuenta</h2>
       <!-- La contraseña ya no se cambia acá: la maneja la página de

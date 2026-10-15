@@ -8,6 +8,18 @@
 //  pruebas (prueba-salas.js, prueba-panel.js) recortan sus secciones de
 //  este archivo con los mismos comentarios-marca que antes.
 "use strict";
+
+//  Nadie enmarca la app (auditoría general 2026-10-14). GitHub Pages no
+//  manda `X-Frame-Options` y `frame-ancestors` no vale dentro de un
+//  <meta>: una página ajena podía cargar la app de un operador con la
+//  sesión abierta en un marco invisible y llevarle el dedo a «Rearmar la
+//  inyección» o a «Actualizar», que son dos toques. Dentro de un marco
+//  la página se esconde y no arranca.
+if (window.top !== window.self) {
+  document.documentElement.hidden = true;
+  throw new Error("la app no corre dentro de un marco");
+}
+
 const _$ = id => document.getElementById(id);
 const _ver = (el, s) => el && el.classList.toggle("oculto", !s);
 
@@ -72,8 +84,35 @@ async function tokenAuth0() {
       await c.getTokenSilently({ cacheMode: "off" });
       claims = await c.getIdTokenClaims();
     }
-    return claims && claims.__raw ? claims.__raw : null;
-  } catch (_) { return null; }
+    if (claims && claims.__raw) return claims.__raw;
+    sesionVencida();
+    return null;
+  } catch (e) {
+    if (e && SESION_TERMINADA.has(e.error)) sesionVencida();
+    return null;
+  }
+}
+
+//  La sesión que dejó de servir (auditoría general 2026-10-14). Sin
+//  token, supabase-js manda sólo la clave pública y la base contesta
+//  CERO filas, sin error: la sala se pintaba «sin datos del equipo», los
+//  avisos de PURGA desaparecían y cada orden decía «tu rol no permite
+//  esto». Una tablet fija en la sala con el refresh token vencido parecía
+//  un equipo caído. Si Auth0 dice que la sesión terminó —no un corte de
+//  red, que se reintenta solo en el próximo pedido— se vuelve al ingreso
+//  diciéndolo.
+const SESION_TERMINADA = new Set(["missing_refresh_token", "invalid_grant",
+  "login_required", "consent_required", "interaction_required"]);
+function sesionVencida() {
+  if (!adentro || sesionAvisada) return;
+  sesionAvisada = true;
+  //  Fuera de la consulta que la descubrió: ésa termina sola, vacía.
+  setTimeout(() => {
+    if (equipoAbierto) { equipoAbierto = false; LuxApp.cerrarSala(); }
+    arrancar(false);
+    msg("Tu sesión venció o se cerró desde otro lado: tocá Ingresar para " +
+        "volver. Mientras tanto el equipo sigue controlando la sala.", "warn");
+  }, 0);
 }
 
 async function haySesion() {
@@ -120,12 +159,17 @@ function traducirIngreso(codigo, desc) {
   const d = String(desc || "");
   if (/correo_sin_confirmar/.test(d))
     return "Te mandamos un correo para confirmar tu cuenta. Abrí el enlace que trae y volvé a tocar Ingresar.";
-  if (codigo === "access_denied")  return "No se pudo entrar: " + (d || "acceso denegado");
-  if (codigo === "unauthorized")   return "Esta cuenta no tiene acceso: " + (d || "");
+  //  Sólo textos PROPIOS (auditoría general 2026-10-14): la descripción
+  //  viene en la URL de vuelta, y cualquiera puede mandar un enlace a la
+  //  app con «error_description=Llamá a este número…» para que lo diga
+  //  el aviso de ingreso. Se mira para elegir el mensaje, no se muestra.
   if (codigo === "invalid_state" || /state/i.test(d))
     return "El ingreso venció o se abrió en otra pestaña: tocá Ingresar de nuevo.";
   if (/Failed to fetch|NetworkError/i.test(d)) return "Sin internet";
-  return d || codigo || "No se pudo entrar";
+  if (codigo === "access_denied")  return "No se pudo entrar: acceso denegado.";
+  if (codigo === "unauthorized")   return "Esta cuenta no tiene acceso.";
+  const id = /^[a-z_]{1,40}$/.test(String(codigo || "")) ? " (" + codigo + ")" : "";
+  return "No se pudo entrar" + id + ". Probá de nuevo; si sigue, avisá a soporte.";
 }
 
 //  Se llama `cliente` y no `sb`: `app.js` ya declara un `sb` en el
@@ -179,8 +223,14 @@ _$("btn-salir").onclick = async () => {
 //  y no mueve la interfaz.
 let cargando = null;
 let yoMismo  = null;   // { sub, email } — lo usa «Personas y permisos»
+let adentro  = false;  // para `sesionVencida`: fuera no hay nada que avisar
+let sesionAvisada = false;
 
 async function arrancar(dentro) {
+  adentro = !!dentro;
+  if (!dentro && typeof cerrarSelectorSala === "function" && cerrarSelectorSala)
+    cerrarSelectorSala();
+  if (dentro) sesionAvisada = false;
   _ver(_$("ingreso"), !dentro);
   if (!dentro) {
     _ver(_$("equipos"), false);
@@ -235,6 +285,115 @@ function _el(tag, clase, texto) {
   if (clase) e.className = clase;
   if (texto !== undefined) e.textContent = texto;
   return e;
+}
+
+//  Las salas de esta cuenta, de la última lectura: el selector del
+//  encabezado las ofrece sin pedirlas de nuevo.
+let salasConocidas = [];
+
+//  La sala y la sección que pide la dirección (#sala=…&ver=…): recargar
+//  o abrir un enlace compartido vuelve ahí (plan de Codex, 2026-10-13).
+function salaDeLaDireccion() {
+  if (typeof location === "undefined" || !location.hash) return null;
+  const q = new URLSearchParams(location.hash.slice(1));
+  const sala = q.get("sala");
+  return sala ? { sala, ver: q.get("ver") || "inicio" } : null;
+}
+
+//  ── El selector de sala del encabezado ──
+//  Plan de Codex: «[Nombre de sala ▾]», filas de selección única, y la
+//  sala recién cambia al TOCAR una; con más de cinco, búsqueda. Es un
+//  diálogo propio, no un desplegable que se abra y cierre solo: el
+//  defecto de «Todas las salas» (que se reabría) fue justamente por un
+//  control que dependía de un repintado.
+//  Quien cierra el selector desde afuera (la sala se cerró, la sesión
+//  venció): sin esto quedaba el fondo oscuro sobre el ingreso y el
+//  Escape escuchando (revisor del rediseño).
+let cerrarSelectorSala = null;
+
+function elegirSala() {
+  const vinculadas = salasConocidas.filter(eq => eq.serie);
+  if (vinculadas.length < 2) return;
+  if (cerrarSelectorSala) cerrarSelectorSala();
+  const actual = LuxApp.equipoActual();
+  const fondo = _el("div", "modal-fondo");
+  const m = _el("div", "modal");
+  m.setAttribute("role", "dialog");
+  m.setAttribute("aria-modal", "true");
+  m.setAttribute("aria-labelledby", "titulo-elegir-sala");
+  const h = _el("h3", null, "Elegir sala");
+  h.id = "titulo-elegir-sala";
+  m.appendChild(h);
+  let filtro = null;
+  if (vinculadas.length > 5) {
+    filtro = _el("input");
+    filtro.setAttribute("aria-label", "Buscar sala");
+    filtro.placeholder = "Buscar sala";
+    m.appendChild(filtro);
+  }
+  //  Botones comunes, no un «listbox»: un listbox promete flechas que
+  //  esto no tiene (revisor). La sala abierta lleva `aria-current`.
+  const lista = _el("div", "lista-salas");
+  lista.setAttribute("aria-label", "Salas");
+  m.appendChild(lista);
+  const cerrar = () => {
+    if (fondo.remove) fondo.remove();
+    document.removeEventListener("keydown", alTeclado);
+    cerrarSelectorSala = null;
+    const n = _$("sala-nombre");
+    if (n && n.focus) n.focus();
+  };
+  cerrarSelectorSala = cerrar;
+  //  Escape cierra y Tab queda ADENTRO, como en el diálogo propio de
+  //  app.js: `aria-modal` sin eso deja tabular a la página de atrás.
+  const alTeclado = e => {
+    if (e.key === "Escape") { cerrar(); return; }
+    if (e.key === "Tab") {
+      const foco = Array.prototype.slice.call(m.querySelectorAll("input, button"));
+      if (!foco.length) return;
+      const i = foco.indexOf(document.activeElement);
+      if (e.shiftKey && i <= 0) { e.preventDefault(); foco[foco.length - 1].focus(); }
+      else if (!e.shiftKey && (i < 0 || i === foco.length - 1)) { e.preventDefault(); foco[0].focus(); }
+    }
+  };
+  const pintar = () => {
+    lista.innerHTML = "";
+    const q = filtro ? filtro.value.trim().toLowerCase() : "";
+    const hay = vinculadas.filter(eq => !q || String(eq.nombre).toLowerCase().indexOf(q) >= 0);
+    if (!hay.length) lista.appendChild(_el("p", "sub", "Ninguna sala con ese nombre."));
+    hay.forEach(eq => {
+        const esta = !!actual && actual.id === eq.id;
+        const b = _el("button");
+        b.setAttribute("data-sala", eq.id);
+        if (esta) b.setAttribute("aria-current", "true");
+        b.appendChild(_el("span", null, eq.nombre));
+        if (esta) b.appendChild(_el("span", "marca-actual", "abierta"));
+        b.onclick = () => {
+          cerrar();
+          if (esta) return;
+          LuxApp.cerrarSala();
+          equipoAbierto = true;
+          LuxApp.abrirSala(eq);
+        };
+        lista.appendChild(b);
+      });
+  };
+  pintar();
+  if (filtro) filtro.oninput = pintar;
+  const botones = _el("div", "modal-botones");
+  botones.appendChild(_boton("Todas las salas", () => {
+    cerrar();
+    const v = _$("btn-volver-salas");
+    if (v) v.click();
+  }));
+  botones.appendChild(_boton("Cancelar", cerrar));
+  m.appendChild(botones);
+  fondo.onclick = e => { if (e.target === fondo) cerrar(); };
+  document.addEventListener("keydown", alTeclado);
+  fondo.appendChild(m);
+  document.body.appendChild(fondo);
+  const primero = filtro || lista.querySelector('[aria-current="true"]') || lista.firstChild;
+  if (primero && primero.focus) primero.focus();
 }
 
 function _boton(texto, alTocar, clase) {
@@ -454,6 +613,29 @@ async function cargarEquipos() {
 
   host.innerHTML = "";
   host.appendChild(frag);
+
+  salasConocidas = data;
+  //  El nombre del encabezado abre el selector sólo si hay a dónde ir.
+  const nombre = _$("sala-nombre");
+  const varias = data.filter(eq => eq.serie).length > 1;
+  if (nombre && nombre.classList) nombre.classList.toggle("varias", varias);
+  //  Con una sola, el nombre no promete un diálogo que no abre (revisor).
+  if (nombre && nombre.setAttribute) {
+    if (varias) nombre.setAttribute("aria-haspopup", "dialog");
+    else if (nombre.removeAttribute) nombre.removeAttribute("aria-haspopup");
+  }
+
+  //  La dirección pide una sala (recargar, o un enlace compartido): si es
+  //  de esta cuenta y tiene controlador, se entra a ésa y a su sección.
+  const pedida = salaDeLaDireccion();
+  if (pedida && !equipoAbierto && !volvioASalas) {
+    const eq = data.find(e => e.id === pedida.sala && e.serie);
+    if (eq) {
+      equipoAbierto = true;
+      LuxApp.abrirSala(eq, pedida.ver);
+      return;
+    }
+  }
 
   //  Con una sola sala YA VINCULADA se entra derecho: es el caso de
   //  todos los días. Si no tiene controlador no se entra, porque adentro
@@ -678,18 +860,23 @@ _$("btn-ack-seg").onclick = () => LuxApp.reconocerSeguridad();
 //  Silenciar pregunta antes: quien calla la sirena desde el teléfono no
 //  ve si hay alguien en la sala (ver `silenciarSirena` en app.js).
 _$("btn-silenciar").onclick = () => LuxApp.silenciarSirena();
-_$("btn-ver-equipos").onclick = () => LuxApp.pestana("mas", "equipos");
+//  Equipos vive en Control desde el rediseño (plan de Codex, 2026-10-13).
+_$("btn-ver-equipos").onclick = () => LuxApp.pestana("control", "equipos");
+//  El nombre de la sala abre el selector (si hay más de una).
+_$("sala-nombre").onclick = () => elegirSala();
 
 //  Cada fila de «Más» abre su propia sub-sección, una a la vez: es una
 //  lista de destinos, no un acordeón donde conviene ver dos a la vez.
 function _abrirSubMas(cual) {
-  ["conexion", "equipos", "gente", "instalacion", "cuenta"].forEach(k =>
+  ["conexion", "gente", "instalacion", "ayuda", "cuenta"].forEach(k =>
     _ver(_$("mas-" + k), k === cual));
   if (cual === "gente") verGente();
 }
 _$("btn-mas-conexion").onclick = () => _abrirSubMas("conexion");
-_$("btn-mas-equipos").onclick = () => _abrirSubMas("equipos");
 _$("btn-mas-gente").onclick = () => _abrirSubMas("gente");
+//  Exportar: el CSV vive con el historial, donde se elige el período.
+_$("btn-mas-exportar").onclick = () => LuxApp.pestana("hist");
+_$("btn-mas-ayuda").onclick = () => _abrirSubMas("ayuda");
 _$("btn-mas-instalacion").onclick = () => _abrirSubMas("instalacion");
 _$("btn-mas-cuenta").onclick = () => _abrirSubMas("cuenta");
 

@@ -12,7 +12,7 @@
 //  Se cachea el CASCARON -la pagina, los estilos, el guion- que no dice
 //  nada sobre la sala. Los datos se piden siempre a la red, y si no hay
 //  red la interfaz lo dice con el velo.
-const CACHE = "clima-v14";   // v14: el arranque sale de index.html a arranque.js (CSP, 2026-10-12)
+const CACHE = "clima-v15";   // v15: el rediseño (plan de Codex, 2026-10-14). v14: el arranque sale de index.html a arranque.js (CSP, 2026-10-12)
 
 //  El cascaron COMPLETO. Antes faltaban `app.js` y `parametros.js`, y
 //  sin ellos abrir sin conexion daba una pagina en blanco: cargaba el
